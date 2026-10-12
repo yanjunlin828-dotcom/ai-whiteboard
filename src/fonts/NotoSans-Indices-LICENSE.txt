@@ -1,0 +1,4 @@
+NotoSans-Indices.woff2 is a static, Unicode-subset derivative of Noto Sans
+(regular weight 400, width 100). Full copyright and SIL OFL 1.1 terms are
+provided in the adjacent NotoSans-OFL.txt and shipped with the application.
+Source: https://github.com/google/fonts/tree/main/ofl/notosans

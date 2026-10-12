@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.local/
+*.log
+
+# Local credentials and environment files
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db

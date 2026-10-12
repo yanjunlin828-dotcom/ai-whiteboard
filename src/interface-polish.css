@@ -1,0 +1,166 @@
+/* Shared control material: a quiet blue shell, paper surfaces, crisp press feedback. */
+:root{
+  --ui-blue:#315b90;--ui-blue-deep:#264b78;--ui-ink:#263d58;--ui-muted:#586d84;
+  --ui-line:#ccd8e5;--ui-wash:#edf3f9;--ui-radius:8px;--ui-header-height:60px;
+  --ui-press-shadow:0 1px 2px #1836501a,inset 0 1px 0 #ffffff9c;
+  --ui-panel-shadow:0 12px 32px #18365024,0 2px 6px #18365012;
+  --ui-ease:cubic-bezier(.16,1,.3,1);--ui-fast:140ms;--ui-open:220ms;
+}
+.ui-icon{flex:none;display:block}.ui-spinner{display:inline-block;width:15px;height:15px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:ui-spin .8s linear infinite;flex:none}
+@keyframes ui-spin{to{transform:rotate(360deg)}}
+.library-page,.app-shell{scrollbar-width:thin;scrollbar-color:#a4b8cf transparent}
+:is(.library-page,.app-shell) :is(input,textarea){caret-color:var(--ui-blue)}
+:is(.library-page,.app-shell) :is(input,textarea)::placeholder{color:var(--ui-muted);opacity:1}
+:is(.library-page,.app-shell) :is(button,summary){-webkit-tap-highlight-color:transparent}
+:is(.library-primary,.library-secondary,.board-card-actions button,.rename-form button,.app-header button,.board-switch summary,.help-panel button,.formula-dialog button,.reading-exit,.teaching-nav button){
+  transition:background-color var(--ui-fast),color var(--ui-fast),border-color var(--ui-fast),box-shadow var(--ui-fast),transform var(--ui-fast) var(--ui-ease);
+}
+:is(.library-primary,.library-secondary,.board-card-actions button,.rename-form button,.app-header button,.board-switch summary,.help-panel button,.formula-dialog button,.reading-exit,.teaching-nav button):active:not(:disabled){transform:translateY(1px);box-shadow:inset 0 1px 3px #18365026;transition-duration:60ms}
+:is(.library-page,.app-shell) button:disabled{transform:none;box-shadow:none}
+:is(.library-page,.app-shell) :is(button,input,textarea,summary):focus-visible{outline:2px solid #477bb5;outline-offset:3px}
+
+/* Library: previews lead; search and filters share a compact working row. */
+.library-page{background:#f3f6fa;color:var(--ui-ink)}
+.library-header{height:var(--ui-header-height);min-height:var(--ui-header-height);padding:0 max(32px,calc((100% - 1140px)/2));gap:24px;background:#2c4d79;border-bottom:1px solid #203e65}
+.library-header h1{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600;letter-spacing:.02em}
+.library-header h1>.ui-icon{width:22px;height:22px;color:#d5e5f8}
+.library-header h1:focus{outline:none}
+.library-actions{gap:10px}.library-actions button{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-weight:600;white-space:nowrap}
+.library-primary,.library-secondary{min-height:42px;padding:9px 16px;border-radius:var(--ui-radius);box-shadow:var(--ui-press-shadow);line-height:20px}
+.library-primary{background:var(--ui-blue);border-color:var(--ui-blue-deep);color:#fff}
+.library-secondary{background:#fff;color:var(--ui-ink);border-color:var(--ui-line)}
+.library-header .library-primary{background:#fff;border-color:#e6effa;color:#264b78;box-shadow:0 2px 4px #142d4e33,inset 0 1px 0 #fff}
+.library-header .library-secondary{color:#eff6ff;background:#ffffff0d;border-color:#ffffff42;box-shadow:inset 0 1px 0 #ffffff12}
+.library-header .library-actions button{min-height:36px;padding:7px 14px;line-height:20px}
+.library-header button:focus-visible{outline-color:#c9def8}
+.library-content{max-width:1204px;padding:24px 32px 56px}
+.library-toolbar{display:flex;align-items:center;gap:16px;margin-bottom:26px;min-height:42px}
+.library-filters{position:relative;display:inline-flex;isolation:isolate;gap:4px;margin:0;padding:4px;border:1px solid #d5dfea;border-radius:10px;background:#e7edf5;flex-shrink:0}
+.library-filters::before{content:'';position:absolute;inset:4px auto 4px 4px;width:96px;border-radius:6px;background:#fff;box-shadow:0 1px 4px #203e651c;z-index:-1;transition:transform 200ms var(--ui-ease)}
+.library-filters[data-archived=true]::before{transform:translateX(100px)}
+.library-filters button{width:96px;min-height:32px;padding:5px 8px;border:0;border-radius:6px;background:transparent;color:var(--ui-muted);font-size:13px;transition:color 140ms}
+.library-filters button[aria-pressed=true]{background:transparent;border:0;color:var(--ui-blue-deep);font-weight:600}
+.library-count{color:var(--ui-muted);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.search-field{margin-left:auto;position:relative;display:flex;align-items:center;width:268px}
+.search-field>.ui-icon{position:absolute;left:13px;width:17px;height:17px;color:var(--ui-muted);pointer-events:none}
+.search-field input{width:100%;min-height:42px;padding:10px 12px 10px 39px;border-color:#ccd8e5;border-radius:var(--ui-radius);background:#ffffffb3;transition:background-color 140ms,border-color 140ms,box-shadow 140ms}
+.search-field input:focus{background:#fff;border-color:#638dbd;outline:2px solid #b8d0ec;outline-offset:2px}
+.board-grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:24px}
+.board-card{border:1px solid #d4dee9;border-radius:14px;background:#fff;transition:border-color 160ms,box-shadow 180ms var(--ui-ease)}
+.board-card:focus-within{border-color:#7e9fc8}
+.board-open{padding:0 0 20px;outline-offset:-4px}
+.board-preview{position:relative;height:210px;grid-template-rows:minmax(0,1fr);background:#eaf0f7;border-bottom:1px solid #e3eaf3;padding:20px;isolation:isolate}
+.board-preview img{min-height:0;min-width:0;background:#fff;box-shadow:0 2px 8px #203e6517;transition:transform 220ms var(--ui-ease);border-radius:2px}
+.board-preview .preview-placeholder{display:flex;flex-direction:column;gap:12px;align-items:center;color:var(--ui-muted);font-size:12px}
+.preview-placeholder>.ui-icon{width:28px;height:28px;color:#728ba8}
+.board-preview .board-open-indicator{position:absolute;right:14px;bottom:14px;display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:#fff;color:var(--ui-blue);box-shadow:0 2px 6px #18365024;opacity:0;transform:translateX(-5px);transition:opacity 160ms,transform 200ms var(--ui-ease)}
+.board-open:focus-visible .board-open-indicator{opacity:1;transform:none}
+.board-open h2{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:600;margin:19px 20px 9px;line-height:24px}
+.board-open time{margin-left:20px;color:var(--ui-muted);font-variant-numeric:tabular-nums}
+.board-short-id{margin-right:20px;color:var(--ui-muted)}
+.board-card-actions{padding:8px 12px;gap:4px;border-color:#e7edf4;background:#fcfdff}
+.board-card-actions button{display:inline-flex;align-items:center;gap:6px;border-radius:6px;color:#506981;min-height:34px;padding:7px 8px}
+.board-card-actions .ui-icon{width:14px;height:14px}
+.board-card-actions button:last-child{margin-left:auto}
+.board-open[aria-busy=true]{opacity:.8}
+.rename-form{border-radius:12px;padding:20px 24px;animation:ui-panel-in var(--ui-open) var(--ui-ease)}
+.rename-form input{border-radius:8px;min-height:42px}.rename-form button{min-height:42px}
+.library-empty{border:1px dashed #c7d5e4;border-radius:14px;background:#ffffff80;margin-top:8px;padding:84px 24px;line-height:1.7}
+
+/* Connection and ownership hints stay in the existing footer, away from the drawing. */
+.app-footer{gap:10px}.app-footer .footer-left{flex-shrink:0}
+.footer-notice{flex:1;min-width:0;display:flex;align-items:center;gap:8px;color:var(--ui-muted);font-size:11px}
+.footer-notice-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.footer-notice-actions{display:flex;align-items:center;flex-shrink:0;gap:8px}.footer-notice-actions:empty{display:none}
+.footer-notice-actions button{min-height:24px;padding:0 2px;border:0;border-radius:3px;background:none;color:var(--ui-blue-deep);font-size:11px;white-space:nowrap}
+.footer-notice-actions button:hover:not(:disabled){text-decoration:underline;text-underline-offset:3px}
+.footer-notice-actions button:focus-visible{outline-offset:-1px}
+.footer-notice.has-error{color:#795220}
+.app-footer:has(.footer-notice) .ai-status{max-width:20%;flex:0 1 auto}
+@media(max-width:650px){.app-footer:has(.footer-notice) .ai-status{display:none}}
+
+/* Canvas chrome: compact buttons have a clear edge and a shallow pressed state. */
+.app-header{height:var(--ui-header-height);padding:0 16px;gap:10px;background:#2c4d79;border-bottom:1px solid #203e65}
+.app-header .board-title{max-width:440px;min-height:36px;border-radius:7px;padding:8px 10px;transition:background-color 140ms,border-color 140ms}
+.app-header .header-divider{height:22px;margin:0 2px}.header-actions{gap:6px}
+.app-header :is(.text-button,.icon-button,.back-library),.board-switch summary{height:36px;min-height:36px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid #ffffff26;border-radius:7px;background:#ffffff09;color:#f6f9ff;padding:0 11px;box-shadow:inset 0 1px 0 #ffffff0c}
+.app-header .icon-button{width:36px;padding:0;flex-shrink:0}
+.app-header .back-library{background:transparent;border-color:transparent;box-shadow:none;padding:0 8px}
+.app-header .formula-trigger{background:#edf4fd;color:#264b78;border-color:#dce8f6;box-shadow:0 1px 3px #142d4e33,inset 0 1px 0 #fff;font-weight:600}
+.app-header .formula-trigger .ui-icon{width:15px;height:15px}
+.app-header .save-status{margin:0 6px;color:#dfebfa;font-size:12px}
+.board-switch summary{width:30px;padding:0;background:transparent;border-color:transparent;box-shadow:none}
+.board-switch summary::-webkit-details-marker{display:none}
+.board-switch summary>.ui-icon{transition:transform 180ms var(--ui-ease)}
+.board-switch[open] summary>.ui-icon{transform:rotate(180deg)}
+.app-header button[aria-expanded=true],.board-switch[open] summary{background:#ffffff20;border-color:#ffffff4d;box-shadow:inset 0 1px 3px #142d4e26}
+.board-switch-panel{top:44px;width:280px;padding:6px;border:0;border-radius:12px;box-shadow:var(--ui-panel-shadow);transform-origin:top left;animation:ui-panel-in var(--ui-open) var(--ui-ease)}
+.board-switch-panel button{background:#fff;color:var(--ui-ink);height:auto;min-height:40px;border:0;border-radius:6px;box-shadow:none;display:block;padding:10px 12px}
+.board-switch-panel button[aria-current=page]{background:#eaf2fc;color:var(--ui-blue-deep);font-weight:600}
+.help-panel{top:14px;right:14px;padding:20px;width:320px;border:0;border-radius:12px;box-shadow:var(--ui-panel-shadow);transform-origin:top right;animation:ui-panel-in var(--ui-open) var(--ui-ease)}
+.help-panel .text-button{min-height:36px;border:1px solid #d7e1ec;background:#f8fafd;border-radius:7px;padding:7px 10px;box-shadow:var(--ui-press-shadow)}
+.help-heading{margin-bottom:18px}.help-heading .text-button{min-height:30px;border:0;box-shadow:none;background:transparent}
+.backup-panel>.text-button{display:block;width:100%;text-align:left;margin-top:8px;padding:10px 12px}
+.formula-dialog{border:0;box-shadow:var(--ui-panel-shadow);border-radius:14px;padding:24px;animation:ui-dialog-in var(--ui-open) var(--ui-ease)}
+.formula-dialog::backdrop{background:rgb(25 48 77 / 30%);animation:ui-backdrop-in 180ms ease-out}
+.formula-dialog button{min-height:36px;border-radius:7px;box-shadow:var(--ui-press-shadow)}
+.formula-dialog .formula-apply{border-color:#274e7f;box-shadow:0 1px 3px #18365026,inset 0 1px 0 #ffffff26}
+.formula-options input{border:1px solid var(--ui-line);border-radius:5px;background:#fff;color:var(--ui-ink)}
+.reading-exit{border:0;border-radius:9px;box-shadow:0 2px 10px #18365029}
+.teaching-nav{height:48px;gap:6px;background:#f7f9fc;border-color:#dce5ef}
+.teaching-nav button{height:32px;min-width:34px;border:1px solid transparent;border-radius:7px;font-size:12px;color:#46637f}
+.teaching-nav button[aria-current=step],.teaching-nav button[aria-pressed=true]{border-color:#274e7f;box-shadow:0 1px 3px #18365026,inset 0 1px 0 #ffffff26;background:var(--ui-blue);color:#fff}
+.teaching-nav .detail-nav{color:#516a85;font-size:12px}.teaching-regions{gap:4px}
+.main-nav+.detail-nav{margin-left:10px;border-left:1px solid transparent;border-radius:7px}
+.app-footer{height:25px;background:#f3f6fa;border-color:#e0e7f0}
+
+/* Excalidraw keeps its original hit areas, shortcuts and accessibility semantics. */
+.app-shell .excalidraw:not(.theme--dark){--color-surface-primary-container:#dce9f8;--color-on-primary-container:#244e7d;--button-hover-bg:#edf3fa;--button-active-border:#91afd2;--island-bg-color:#fff;--color-brand-active:#dce9f8}
+.app-shell .excalidraw .Island{border-radius:12px;box-shadow:0 3px 16px #213e5e18,0 1px 3px #213e5e14}
+.app-shell .excalidraw .ToolIcon__icon{border:1px solid transparent;border-radius:8px;transition:background-color 140ms,box-shadow 140ms,border-color 140ms,transform 140ms var(--ui-ease)}
+.app-shell .excalidraw .ToolIcon input:checked+.ToolIcon__icon{border-color:#aac1dc;box-shadow:inset 0 1px 0 #ffffff80,0 1px 2px #18365014}
+.app-shell .excalidraw .ToolIcon:active .ToolIcon__icon:not([aria-disabled=true]){transform:translateY(1px);transition-duration:60ms}
+.app-shell .excalidraw .ToolIcon input:focus-visible+.ToolIcon__icon{outline:2px solid #608bbd;outline-offset:2px}
+.app-shell .excalidraw.theme--dark .ToolIcon input:checked+.ToolIcon__icon{border-color:#536f92;box-shadow:inset 0 1px 0 #ffffff12}
+.app-shell .excalidraw :is(.dropdown-menu,.popover){animation:ui-panel-in var(--ui-open) var(--ui-ease)}
+@keyframes ui-panel-in{from{opacity:.35;transform:translateY(-5px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes ui-dialog-in{from{opacity:.35;transform:scale(.98)}to{opacity:1;transform:none}}
+@keyframes ui-backdrop-in{from{opacity:0}to{opacity:1}}
+@media(hover:hover){
+  .library-primary:hover:not(:disabled){background:#264b78}.library-secondary:hover:not(:disabled){background:#f1f6fc;border-color:#9fb7d2}
+  .library-header .library-primary:hover:not(:disabled){background:#e4effc;border-color:#e4effc}.library-header .library-secondary:hover:not(:disabled){background:#ffffff1c;border-color:#ffffff70}
+  .board-card:hover{border-color:#93aecf;box-shadow:0 4px 16px #1836500c}
+  .board-open:hover:not(:disabled) .board-preview img{transform:scale(1.012)}
+  .board-open:hover:not(:disabled) .board-open-indicator{opacity:1;transform:none}
+  .board-card-actions button:hover:not(:disabled){background:#eaf1fa;color:#274e7f}
+  .app-header :is(.text-button,.icon-button,.back-library):hover:not(:disabled),.board-switch summary:hover{background:#ffffff1c;border-color:#ffffff52}
+  .app-header .formula-trigger:hover:not(:disabled){background:#fff;border-color:#fff;color:#203e65}
+  .board-switch-panel button:hover:not(:disabled){background:#edf3fa;color:#264b78}
+  .help-panel .text-button:hover:not(:disabled),.formula-dialog button:hover:not(:disabled){background:#eaf1fa;border-color:#9bb5d4}
+  .formula-dialog .formula-apply:hover:not(:disabled){background:#264b78;border-color:#264b78}
+}
+@media(max-width:750px){
+  .library-header{padding:18px 24px}.library-content{padding:24px 24px 24px}.library-toolbar{gap:12px}.search-field{width:220px}
+  .app-header{padding:0 10px;gap:6px}.header-actions{gap:4px}.app-header .text-button{padding:0 8px;font-size:12px}.app-header .board-title{max-width:240px}
+}
+@media(max-width:650px){
+  .library-header{flex-direction:row;align-items:center;min-height:var(--ui-header-height);padding:0 18px;gap:12px}.library-header h1{font-size:17px;gap:8px}.library-header h1>.ui-icon{width:20px;height:20px}
+  .library-actions{width:auto;flex-wrap:nowrap;gap:8px}.library-header .library-actions button{min-height:36px;padding:7px 11px;font-size:12px;gap:6px}.library-actions .ui-icon{width:16px;height:16px}
+  .library-content{padding:24px 18px 36px}.library-toolbar{flex-wrap:wrap;gap:14px}.library-count{margin-left:auto}.search-field{width:100%;margin:0;order:3}
+  .board-grid{grid-template-columns:1fr}.board-preview{height:210px}.board-card-actions button{min-height:40px}.rename-form{padding:16px}
+  .app-header .back-library{padding:0;width:32px;flex-shrink:0}.back-library>span{display:none}.app-header .board-title{width:40px;min-width:24px;padding:7px 4px}
+  .app-header .backup{display:none}
+  .app-header .formula-trigger .ui-icon{display:none}.app-header .save-status{margin:0 2px;font-size:11px;gap:4px}.app-header .icon-button{width:32px}
+  .board-switch summary{width:26px}.board-switch-panel{left:-65px;width:min(280px,calc(100vw - 36px))}
+  .help-panel{width:min(320px,calc(100% - 24px));right:12px}.formula-dialog{padding:18px}
+  .teaching-nav{gap:3px;justify-content:flex-start;padding:0 6px}.teaching-nav button{padding:0 7px}.teaching-nav .nav-divider{margin:0 2px}
+}
+@media(max-width:380px){.library-header h1>.ui-icon{display:none}.app-header .save-status{font-size:0;margin:0 2px}.app-header .save-status .status-dot{width:6px;height:6px}.formula-options{gap:10px}}
+@media(prefers-reduced-motion:reduce){
+  :is(.library-page,.app-shell) :is(button,summary,input,textarea),.app-shell .excalidraw .ToolIcon__icon{transition:background-color 80ms,color 80ms,border-color 80ms}
+  .library-filters::before,.board-preview img,.board-preview .board-open-indicator,.board-switch summary>.ui-icon{transition:none}
+  .board-open:hover .board-preview img{transform:none}
+  :is(.library-page,.app-shell) button:active:not(:disabled),.board-switch summary:active,.app-shell .excalidraw .ToolIcon:active .ToolIcon__icon:not([aria-disabled=true]){transform:none}
+  .help-panel,.board-switch-panel,.formula-dialog,.formula-dialog::backdrop,.rename-form,.app-shell .excalidraw :is(.dropdown-menu,.popover){animation:none}
+  .ui-spinner{animation:none;border-style:dotted}
+}

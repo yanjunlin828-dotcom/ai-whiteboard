@@ -1,0 +1,24 @@
+/* Tool names and shortcuts remain available through the native tooltips. */
+.app-shell .excalidraw .HintViewer,
+.app-shell .excalidraw .welcome-screen-decor{display:none}
+.app-shell .excalidraw .ToolIcon__keybinding{visibility:hidden}
+.app-shell .excalidraw .ToolIcon:hover .ToolIcon__keybinding,
+.app-shell .excalidraw .ToolIcon:focus-within .ToolIcon__keybinding{visibility:visible}
+.reading-enter{flex-shrink:0}
+
+.app-shell.is-reading{position:fixed;inset:0;width:100%;height:100dvh;background:#fff;z-index:10}
+.app-shell.is-reading>.app-header,
+.app-shell.is-reading>.app-footer,
+.app-shell.is-reading>.teaching-nav,
+.is-reading .excalidraw .layer-ui__wrapper,
+.is-reading .excalidraw .App-bottom-bar,
+.is-reading .excalidraw .FixedSideContainer,
+.is-reading .excalidraw .scroll-back-to-content,
+.is-reading .help-panel{display:none!important}
+.app-shell.is-reading:fullscreen{width:100vw;height:100dvh}
+.is-reading .canvas-wrap{width:100%;min-height:0}
+.reading-exit{position:absolute;top:max(14px,env(safe-area-inset-top));right:max(14px,env(safe-area-inset-right));z-index:8;display:grid;place-items:center;width:40px;height:40px;padding:0;border:1px solid #c9d5e4;border-radius:6px;color:#35639c;background:#fff;cursor:pointer}
+.reading-exit:hover{color:#203e65;background:#edf3fb;border-color:#7da7da}
+.reading-exit:focus-visible{outline:2px solid #35639c;outline-offset:3px}
+.canvas-wrap:has(.theme--dark) .reading-exit{background:#202b3a;color:#c9def8;border-color:#536b88}
+.canvas-wrap:has(.theme--dark) .reading-exit:hover{background:#314d70}

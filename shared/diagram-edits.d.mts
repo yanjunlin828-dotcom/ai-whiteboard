@@ -1,0 +1,6 @@
+import type {ExcalidrawElement,ExcalidrawTextElement} from '@excalidraw/excalidraw/element/types';
+import type {TextLayout} from './edits.mjs';
+import type {DiagramRegion,ConnectionOptions} from './diagram.mjs';
+export type DiagramEdit={op:'resize';target:string;width:number;height:number}|{op:'set_style';target:string;style:{fontSize?:number;color?:string;backgroundColor?:string;strokeWidth?:number;strokeStyle?:'solid'|'dashed'|'dotted';roughness?:number}}|{op:'set_region';target:string;region?:DiagramRegion;regionId?:string}|{op:'move_region';regionId:string;dx:number;dy:number}|({op:'reroute';target:string}&ConnectionOptions)|({op:'connect';id:string;from:string;to:string}&ConnectionOptions)|{op:'set_formula';target:string;latex:string;fontSize?:number;color?:string};
+export function needsDiagramEdits(input:unknown,elements:readonly ExcalidrawElement[]):boolean;
+export function planDiagramEdits(elements:readonly ExcalidrawElement[],input:unknown,selectedIds:string[],measure:(element:ExcalidrawTextElement,width:number,key:string)=>Promise<TextLayout>,templates?:readonly ExcalidrawElement[]):Promise<{elements:ExcalidrawElement[];layouts:Record<string,TextLayout>;affectedIds:string[];createdIds:string[]}>;

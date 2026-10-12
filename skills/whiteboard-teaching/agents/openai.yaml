@@ -1,0 +1,11 @@
+interface:
+  display_name: "讲解板书"
+  short_description: "先拆解共同逻辑，再选择图形表达，生成核心清楚、详解就近的讲解白板"
+  brand_color: "#35639C"
+  default_prompt: "使用 $whiteboard-teaching 先总结核心与共同逻辑，将详细规格映射到模块和就近附图；按内容选择排列与框体尺寸，分层展示关系并保留必要线标，先预览核心再展开详解，检查主次、可读性和保存。"
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "ai_whiteboard"
+      description: "本地讲解白板：读取、候选预览、局部修改、图形检查与真实渲染"
+      transport: "stdio"

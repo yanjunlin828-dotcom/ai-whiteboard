@@ -1,0 +1,6 @@
+.teaching-nav{height:42px;flex-shrink:0;display:flex;align-items:center;justify-content:center;gap:6px;background:#f4f6f8;border-top:1px solid #e4e9ef;color:#35639c}
+.teaching-nav button{min-width:32px;height:30px;border:0;border-radius:5px;background:transparent;color:inherit;padding:0 9px;font-size:12px;font-variant-numeric:tabular-nums}
+.teaching-nav button:hover:not(:disabled){background:#e5eef9}.teaching-nav button[aria-current=step],.teaching-nav button[aria-pressed=true],.teaching-nav button[aria-current=step]:hover:not(:disabled),.teaching-nav button[aria-pressed=true]:hover:not(:disabled){background:#35639c;color:#fff}
+.teaching-nav button:disabled{opacity:.35}.teaching-regions{display:flex;gap:3px}.nav-divider{height:15px;border-left:1px solid #c9d5e4;margin:0 4px}
+.teaching-regions{min-width:0;overflow-x:auto}.teaching-nav>button,.teaching-regions>button{flex-shrink:0}
+.teaching-nav .main-nav{font-weight:700}.teaching-nav .detail-nav{color:#72839a;font-size:11px}.main-nav+.detail-nav{margin-left:14px;border-left:1px solid #c9d5e4;border-radius:0}.teaching-nav [role=status]{position:absolute;bottom:78px;background:#fff;padding:8px;color:#825329}

@@ -1,0 +1,15 @@
+import type {ExcalidrawElement} from '@excalidraw/excalidraw/element/types';
+export type DiagramRegion={id:string;title:string;kind:'main'|'detail';order:number;parentId?:string;lessonId:string};
+export type ConnectionOptions={fromPort?:'left'|'right'|'top'|'bottom';toPort?:'left'|'right'|'top'|'bottom';route?:'straight'|'orthogonal';via?:[number,number][];endArrowhead?:'arrow'|'none';regionId?:string;color?:string;strokeWidth?:number;strokeStyle?:'solid'|'dashed'|'dotted';roughness?:number};
+export function meta(e:unknown):any;
+export function bounds(elements:readonly ExcalidrawElement[]):number[]|null;
+export function contains(parent:ExcalidrawElement,child:ExcalidrawElement,padding?:number):boolean;
+export function regionDefinitions(elements:readonly ExcalidrawElement[]):Array<DiagramRegion&{elementId:string}>;
+export function regionMembers(elements:readonly ExcalidrawElement[],id:string,includeChildren?:boolean):ExcalidrawElement[];
+export function itemMetadata(item:unknown):any;
+export function checkRegions(elements:readonly ExcalidrawElement[]):unknown;
+export function checkNewCollisions(existing:readonly ExcalidrawElement[],added:readonly ExcalidrawElement[]):void;
+export function permittedContainment(a:ExcalidrawElement,b:ExcalidrawElement,elements:readonly ExcalidrawElement[]):boolean;
+export function portPoint(e:ExcalidrawElement,port:string,gap?:number):number[];
+export function assignRoute(arrow:ExcalidrawElement,from:ExcalidrawElement,to:ExcalidrawElement,options:ConnectionOptions,elements:readonly ExcalidrawElement[]):ExcalidrawElement;
+export function validateDiagram(elements:readonly ExcalidrawElement[],options?:{regionId?:string;minFontSize?:number}):any;

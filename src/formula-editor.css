@@ -1,0 +1,10 @@
+.formula-dialog{width:min(620px,calc(100vw - 28px));max-height:calc(100dvh - 40px);overflow:auto;border:1px solid #bacce1;border-radius:12px;padding:22px;color:#24364b;background:#fff;font:14px "Segoe UI","Microsoft YaHei",sans-serif}
+.formula-dialog::backdrop{background:rgb(25 48 77 / 32%)}
+.formula-heading,.formula-options,.formula-actions{display:flex;align-items:center;gap:14px}
+.formula-heading{justify-content:space-between;margin-bottom:18px}.formula-heading h2{font-size:18px;margin:0}
+.formula-dialog button{border:1px solid #bdcde1;background:#fff;color:#2c4d79;border-radius:6px;padding:7px 12px}
+.formula-dialog textarea{display:block;margin:8px 0 14px;width:100%;min-height:112px;resize:vertical;padding:12px;border:1px solid #a8bdd7;border-radius:6px;font:15px/1.6 Consolas,monospace;color:#24364b;background:#f7faff}
+.formula-options label{display:flex;align-items:center;gap:8px}.formula-options input[type=number]{width:65px;padding:5px}.formula-options input[type=color]{width:38px;height:30px;padding:2px}.formula-options span{margin-left:auto;color:#4e6280;font-size:12px}
+.formula-preview{display:flex;align-items:center;justify-content:center;min-height:150px;margin:18px 0;border:1px solid #d5e0ed;border-radius:6px;padding:16px;overflow:auto;background:#fff}.formula-preview img{max-width:100%;height:auto}.formula-preview span{color:#4e6280}
+.formula-actions{justify-content:flex-end}.formula-dialog .formula-apply{background:#35639c;border-color:#35639c;color:#fff}.formula-dialog [role=alert]{color:#9b2e31;overflow-wrap:anywhere}
+.formula-dialog :is(button,input,textarea):focus-visible{outline:2px solid #35639c;outline-offset:3px}
