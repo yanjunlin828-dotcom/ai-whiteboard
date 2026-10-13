@@ -21,8 +21,12 @@ export interface Patch {
   items?: Item[];
   edits?: (EditOperation|DiagramEdit)[];
   selectionIds?: string[];
+  previewId?:string;
+  returnElements?:boolean;
+  includeRelated?:boolean;
+  verification?:{validate?:boolean;render?:boolean;elementIds?:string[];regionId?:string;includeChildren?:boolean;minFontSize?:number};
 }
-export interface EditorJob { id: string; kind: 'read' | 'patch' | 'render' | 'preview' | 'validate'; input: Patch & { revision?: number; elementIds?: string[];regionId?:string } }
+export interface EditorJob { id: string; kind: 'read' | 'patch' | 'render' | 'preview' | 'validate'; input: Patch & { revision?: number; elementIds?: string[];regionId?:string;includeChildren?:boolean } }
 type Skeleton = Parameters<typeof convertToExcalidrawElements>[0];
 
 async function fonts(text: string) {
@@ -163,9 +167,9 @@ export async function generateElements(input: Patch, scene: Scene): Promise<Exca
   return [...structuredClone(scene.elements), ...added];
 }
 
-export async function renderScene(scene: Scene, ids?: string[], regionId?:string) {
+export async function renderScene(scene: Scene, ids?: string[], regionId?:string,includeChildren=true) {
   let elements = scene.elements.filter(element => !element.isDeleted);
-  if(regionId)elements=regionMembers(elements,regionId);
+  if(regionId)elements=regionMembers(elements,regionId,includeChildren);
   if (ids?.length) {
     const included = new Set(ids);
     if (ids.some(id => !elements.some(element => element.id === id))) throw new Error('预览目标不存在，请重新读取图元 ID。');

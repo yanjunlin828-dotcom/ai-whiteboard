@@ -28,7 +28,9 @@ export const editSchema=z.discriminatedUnion('op',[
   z.object({op:z.literal('reroute'),target:elementId,fromPort:connection.fromPort,toPort:connection.toPort,route:connection.route,via:connection.via,endArrowhead:connection.endArrowhead}).strict(),
   z.object({op:z.literal('set_formula'),target:elementId,latex:text,fontSize:size.optional(),color:color.optional()}).strict(),
 ]);
-export const patchShape={boardId:boardIdSchema.optional(),editorSessionId:z.string().uuid().optional(),baseRevision:z.number().int().nonnegative(),requestId:z.string().uuid(),
+export const verificationSchema=z.object({validate:z.boolean().optional(),render:z.boolean().optional(),elementIds:z.array(elementId).min(1).max(100).optional(),regionId:alias.optional(),includeChildren:z.boolean().optional(),minFontSize:size.optional()}).strict();
+export const resultOptions={returnElements:z.boolean().optional(),includeRelated:z.boolean().optional(),previewId:z.string().uuid().optional(),verification:verificationSchema.optional()};
+export const patchShape={boardId:boardIdSchema.optional(),editorSessionId:z.string().uuid().optional(),baseRevision:z.number().int().nonnegative(),requestId:z.string().uuid(),...resultOptions,
   flow:z.object({title:text,steps:z.array(z.object({id:alias,label:text,description:text.optional()}).strict()).min(2).max(5),note:text.optional()}).strict().optional(),
   items:z.array(itemSchema).min(1).max(40).optional(),edits:z.array(editSchema).min(1).max(40).optional(),selectionIds:z.array(elementId).max(100).optional()};
 export const patchSchema=z.object(patchShape).strict().superRefine((input,ctx)=>{
@@ -46,8 +48,8 @@ export const patchSchema=z.object(patchShape).strict().superRefine((input,ctx)=>
   }
   for(const op of input.edits??[])if(op.op==='set_region'&&Boolean(op.region)===Boolean(op.regionId))issue('set_region needs exactly one of region or regionId.');
 });
-export const readShape={boardId:boardIdSchema.optional(),editorSessionId:z.string().uuid().optional(),scope:z.enum(['all','selection']).default('all'),limit:z.number().int().min(1).max(500).default(150),offset:z.number().int().min(0).max(2000).default(0),revision:z.number().int().nonnegative().optional(),regionId:alias.optional(),summary:z.boolean().default(false)};
-export const renderShape={boardId:boardIdSchema.optional(),editorSessionId:z.string().uuid().optional(),revision:z.number().int().nonnegative(),elementIds:z.array(elementId).max(100).optional(),regionId:alias.optional()};
-export const validateShape={boardId:boardIdSchema.optional(),editorSessionId:z.string().uuid().optional(),revision:z.number().int().nonnegative(),regionId:alias.optional(),minFontSize:size.default(24)};
-export const previewShape={...patchShape,regionId:alias.optional()};
-export const previewSchema=patchSchema.safeExtend({regionId:alias.optional()});
+export const readShape={boardId:boardIdSchema.optional(),editorSessionId:z.string().uuid().optional(),scope:z.enum(['all','selection']).default('all'),limit:z.number().int().min(1).max(500).default(150),offset:z.number().int().min(0).max(2000).default(0),revision:z.number().int().nonnegative().optional(),regionId:alias.optional(),summary:z.boolean().default(false),elementIds:z.array(elementId).min(1).max(100).optional(),detail:z.enum(['text','layout','full']).optional(),includeRelated:z.boolean().optional(),source:z.enum(['live','saved']).optional(),includeChildren:z.boolean().optional()};
+export const renderShape={boardId:boardIdSchema.optional(),editorSessionId:z.string().uuid().optional(),revision:z.number().int().nonnegative(),elementIds:z.array(elementId).max(100).optional(),regionId:alias.optional(),includeChildren:z.boolean().optional()};
+export const validateShape={boardId:boardIdSchema.optional(),editorSessionId:z.string().uuid().optional(),revision:z.number().int().nonnegative(),regionId:alias.optional(),minFontSize:size.default(24),elementIds:z.array(elementId).min(1).max(100).optional(),includeChildren:z.boolean().optional()};
+export const previewShape={...patchShape,regionId:alias.optional(),elementIds:z.array(elementId).min(1).max(100).optional(),includeChildren:z.boolean().optional()};
+export const previewSchema=patchSchema.safeExtend({regionId:alias.optional(),elementIds:z.array(elementId).min(1).max(100).optional(),includeChildren:z.boolean().optional()});

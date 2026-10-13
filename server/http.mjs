@@ -7,6 +7,7 @@ import { ZodError } from 'zod';
 import { BoardError } from './store.mjs';
 import { saveBackup } from './backup.mjs';
 import { EditorLeases } from './editor-leases.mjs';
+import { ArchiveRequests } from './archive.mjs';
 
 const MAX_BODY = 16 * 1024 * 1024;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png', '.jpg': 'image/jpeg' };
@@ -42,11 +43,13 @@ async function staticFile(res, root, pathname) {
 export function createBoardServer({ store: defaultStore, root, assets, middleware, bridge: defaultBridge, library, bridgeToken, clock = Date.now }) {
   const instanceId = randomBytes(16).toString('hex');
   const sessions = new Map();
+  let archives;
   let lastMcpCheck = null;
   const boardBridge = id => library ? library.bridge(id) : defaultBridge;
   const leases = new EditorLeases(sessions, clock,
-    (id, token) => Boolean(sessions.get(token)?.saving || boardBridge(id)?.active?.owner),
+    (id, token) => Boolean(sessions.get(token)?.saving || boardBridge(id)?.active?.owner || archives?.reserved(id)),
     id => boardBridge(id)?.close());
+  if(library)archives=new ArchiveRequests(library,sessions,leases,clock);
   const server = http.createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -57,6 +60,7 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
       if (!allowedHosts.includes(req.headers.host)) throw new BoardError('HOST_DENIED', '仅允许本机访问。', 403);
       const url = new URL(req.url, `http://${req.headers.host}`);
       if (url.pathname.startsWith('/api/')) {
+        archives?.expire();
         leases.refresh();
         const requestToken=req.headers.authorization?.replace(/^Bearer /,'');
         const currentSession=sessions.get(requestToken);
@@ -86,6 +90,8 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
             editors:library?[...library.stores.values()].flatMap(s=>{const token=leases.owner(s.boardId),session=sessions.get(token);return token?[{boardId:s.boardId,title:s.board.title,editorSessionId:session.epoch,archived:Boolean(s.board.archived)}]:[]}):undefined,
             localEditsEnabled: bridge?.allowEdits ?? false,
             recoveryWarnings: store.recoveryWarnings.length, capabilities: bridge ? ['board_status', 'board_read', 'board_patch', 'board_render','board_preview','board_validate'] : ['board_status'],
+            featureFlags:{preparedPreview:true,preciseRead:true,savedRead:true,patchVerification:true,longPoll:true},
+            readinessAgeMs:selectedSession?Math.max(0,clock()-(selectedSession.reportedAt??selectedSession.lastPoll??0)):null,
             savedAt: store.board.savedAt, ...(target?{transactionBoardId:target}:{}), ...(receiptBridge ? receiptBridge.status(url.searchParams.get('requestId')) : {}) });
         }
         if (url.pathname.startsWith('/api/agent/')) {
@@ -98,6 +104,7 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
           lastMcpCheck = new Date(clock()).toISOString();
           const input=await body(req);
           if(library&&input.boardId){store=library.get(input.boardId);bridge=library.bridge(input.boardId);}
+          if(archives?.reserved(store.boardId))throw new BoardError('ARCHIVE_BUSY','白板正在保存并退出编辑，暂不接收 AI 操作。',409);
           const writer=leases.owner(store.boardId??'main');
           if(library){
             const active=sessions.get(writer);
@@ -108,6 +115,11 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
             if(store.board.archived)throw new BoardError('ARCHIVED','请先恢复已归档白板。',409);
           }
           if (!writer) throw new BoardError('EDITOR_OFFLINE', '请打开白板编辑窗口后重试。', 409);
+          const state=sessions.get(writer),recent=state&&clock()-(state.reportedAt??0)<2500;
+          if(recent&&!(kind==='read'&&input.source==='saved')&&!bridge.active&&!bridge.status(input.requestId).transaction&&['input_active','recovery','blocked'].includes(state.editorState)){
+            const reason={input_active:'编辑页正在输入，请结束输入后重试。',recovery:'编辑页正在恢复草稿，请先处理草稿。',blocked:'编辑页保存冲突尚未处理，请先确认草稿。'}[state.editorState];
+            throw new BoardError('EDITOR_NOT_READY',reason,409);
+          }
           const result = await bridge.invoke(kind, input);
           return json(res, result.error ? 409 : 200, result.error ?? {...result,...(library?{boardId:store.boardId,editorSessionId:input.editorSessionId}:{})});
         }
@@ -118,12 +130,13 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
           const prior = sessions.get(priorToken);
           if (prior?.clientId === input.clientId) {
             prior.lastSeen = clock();
-            if (!store.board.archived) leases.acquire(priorToken);
+            if (!store.board.archived&&!archives?.reserved(store.boardId)) leases.acquire(priorToken);
             return json(res, 200, { token: priorToken, writable: isWriter(priorToken)&&!store.board.archived, instanceId, editorSessionId:prior.epoch, board: store.read(), recoveryWarnings: store.recoveryWarnings.length });
           }
           if (sessions.size >= 100) throw new BoardError('SESSION_LIMIT', '连接过多，请稍后再试。', 429);
           const token = randomBytes(32).toString('hex');
           if(library){store=library.get(input.boardId??'main');bridge=library.bridge(store.boardId);}
+          if(archives?.reserved(store.boardId))throw new BoardError('ARCHIVE_BUSY','该白板正在准备归档，请等待结果后再打开。',409);
           const epoch=randomUUID();
           const session={ clientId: input.clientId, lastSeen: clock(),boardId:store.boardId??'main',epoch,editor:input.page!=='library',eligible:input.page!=='library' };
           sessions.set(token, session);
@@ -146,12 +159,15 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
           const epoch=req.headers['x-whiteboard-session'];
           const handoffHeartbeat=url.pathname==='/api/heartbeat'&&epoch===session.previousEpoch;
           if(selected!==session.boardId||(epoch!==session.epoch&&!handoffHeartbeat))throw new BoardError('BOARD_MISMATCH','页面白板身份已过期，请重新连接。',409);
-          if(url.pathname==='/api/boards'&&req.method==='GET')return json(res,200,{boards:library.list(),warnings:library.warnings.length});
+          if(url.pathname==='/api/boards'&&req.method==='GET')return json(res,200,{boards:library.list().map(b=>({...b,openEditors:archives.editors(b.boardId).length})),warnings:library.warnings.length});
+          if(url.pathname==='/api/boards/archive-status'&&req.method==='GET')return json(res,200,{archive:archives.get(url.searchParams.get('boardId'),url.searchParams.get('requestId'),token)});
           if(url.pathname==='/api/boards/preview'&&req.method==='GET')return json(res,200,{board:library.get(url.searchParams.get('boardId')).read()});
           if(url.pathname.startsWith('/api/boards/')&&req.method==='POST'){
             const input=await sessionBody();
+            if(url.pathname==='/api/boards/archive')return json(res,200,{archive:await archives.start(input,token)});
             if(url.pathname==='/api/boards/open'){
               const target=library.get(input.boardId);
+              if(archives.reserved(session.boardId)||archives.reserved(target.boardId))throw new BoardError('ARCHIVE_BUSY','白板正在准备归档，请等待结果后再切换。',409);
               leases.leave(token);
               session.boardId=target.boardId;session.epoch=randomUUID();session.previousEpoch=null;session.lastPoll=0;
               session.editor=input.page!=='library';session.eligible=session.editor;
@@ -166,8 +182,9 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
             }
             if(url.pathname==='/api/boards/change'){
               const {boardId,...change}=input;
+              if(archives.reserved(boardId))throw new BoardError('ARCHIVE_BUSY','白板正在准备归档，请等待结果后再修改。',409);
               const owner=leases.owner(boardId);
-              if(owner&&owner!==token)throw new BoardError('READ_ONLY','请在该白板的编辑窗口中重命名或归档。',409);
+              if(owner&&owner!==token)throw new BoardError('READ_ONLY','该白板仍在其他窗口编辑。请先返回白板列表；归档可使用“关闭并归档”。',409);
               if(library.bridge(boardId).active)throw new BoardError('EDITOR_BUSY','目标白板仍有 AI 请求。',409);
               return json(res,200,await library.change(boardId,change));
             }
@@ -180,6 +197,7 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
             throw new BoardError('BACKUP_FAILED', '本机备份失败。当前内容仍保留，可重试或下载备份。', 503);
           }
         }
+        if(url.pathname==='/api/archive/respond'&&req.method==='POST'&&archives)return json(res,200,{archive:await archives.respond(await sessionBody(),token)});
         if(url.pathname==='/api/formula/render'&&req.method==='POST'){
           const {renderFormula}=await import('./formula.mjs');
           try{return json(res,200,await renderFormula(await sessionBody()));}
@@ -188,10 +206,19 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
         if (url.pathname.startsWith('/api/jobs/') && bridge && req.method === 'POST') {
           const input = await sessionBody();
           if (!isWriter(token)||store.board.archived) throw new BoardError('READ_ONLY', '只有活动编辑窗口可以接收 AI 操作。', 409);
+          if(url.pathname==='/api/jobs/poll'&&archives?.reserved(store.boardId))throw new BoardError('ARCHIVE_BUSY','白板正在准备归档，暂不领取 AI 请求。',409);
           leases.renew(token);
           if (url.pathname === '/api/jobs/poll') {
+            const waitMs=input.waitMs??0;
+            if(!Number.isInteger(waitMs)||waitMs<0||waitMs>5000)throw new BoardError('INVALID_WAIT','领取等待需在0–5000毫秒内。');
+            const abort=new AbortController();
+            const disconnected=()=>{if(!res.writableEnded)abort.abort();};res.on('close',disconnected);
+            await bridge.wait(waitMs,abort.signal);res.removeListener('close',disconnected);
+            if(abort.signal.aborted||res.destroyed)return;
+            if(sessions.get(token)!==session||session.epoch!==expectedEpoch||!isWriter(token)||store.board.archived)throw new BoardError('BOARD_MISMATCH','等待期间编辑归属已变化。',409);
+            if(archives?.reserved(store.boardId))throw new BoardError('ARCHIVE_BUSY','白板正在准备归档，未领取 AI 请求。',409);
             session.lastPoll = clock();
-            return json(res, 200, { job: bridge.poll(token) });
+            return json(res, 200, { job: bridge.poll(token),waitSupported:true });
           }
           if (url.pathname === '/api/jobs/commit') return json(res, 200, await bridge.commit(token, input.id, input));
           if (url.pathname === '/api/jobs/preview') return json(res,200,await bridge.preview(token,input.id,input));
@@ -203,18 +230,27 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
         if (url.pathname === '/api/heartbeat' && req.method === 'POST') {
           const input=await sessionBody();
           if(['ready','input_active','unsaved','saving','ai_busy','recovery','loading','library','read_only','blocked'].includes(input.editorState)){session.editorState=input.editorState;session.reportedAt=clock();}
-          if(!store.board.archived && input.autoClaim===true)leases.acquire(token);
+          if(!store.board.archived && !archives?.reserved(store.boardId) && input.autoClaim===true)leases.acquire(token);
           leases.renew(token);
-          return json(res, 200, { writable: isWriter(token)&&!store.board.archived, editorSessionId:session.epoch, handoffRequested:leases.requested(token), handoffPending:leases.pending(token), revision: store.board.revision, instanceId, lastMcpCheck });
+          const archive=archives?.notice(token)??null;
+          return json(res, 200, { writable: isWriter(token)&&!store.board.archived&&(!archives||archives.canSave(store.boardId,token)), editorSessionId:session.epoch, handoffRequested:leases.requested(token)||Boolean(isWriter(token)&&archive?.status==='waiting'&&!archive.responded), handoffPending:leases.pending(token), revision: store.board.revision, instanceId, lastMcpCheck, archive });
         }
         if (url.pathname === '/api/claim' && req.method === 'POST') {
           await sessionBody();
           if(store.board.archived)throw new BoardError('ARCHIVED','请先恢复已归档白板。',409);
+          if(archives?.reserved(store.boardId))throw new BoardError('ARCHIVE_BUSY','白板正在准备归档，请等待结果。',409);
           leases.request(token);
           return json(res, 200, { writable: isWriter(token), editorSessionId:session.epoch, handoffPending:leases.pending(token), board: store.read() });
         }
         if(url.pathname==='/api/handoff'&&req.method==='POST'){
           const input=await sessionBody();
+          if(archives?.reserved(store.boardId)){
+            // Older AI-opened pages already know how to flush and acknowledge a handoff.
+            const archive=archives.notice(token);
+            if(!isWriter(token)||archive?.status!=='waiting')throw new BoardError('ARCHIVE_BUSY','白板正在准备归档，请等待结果。',409);
+            const result=await archives.respond({requestId:archive.requestId,ready:true,revision:input.revision},token);
+            return json(res,200,{writable:result.status==='failed'&&isWriter(token),editorSessionId:session.epoch});
+          }
           if(input.revision!==store.board.revision)throw new BoardError('REVISION_CONFLICT','版本已变化，请保存并重新同步后切换。',409);
           leases.yield(token);
           return json(res,200,{writable:isWriter(token),editorSessionId:session.epoch});
@@ -229,6 +265,7 @@ export function createBoardServer({ store: defaultStore, root, assets, middlewar
         if (url.pathname === '/api/board' && req.method === 'POST') {
           const input = await sessionBody();
           if (!isWriter(token)||store.board.archived) throw new BoardError('READ_ONLY', '此窗口为阅读模式；请点击“在此窗口编辑”。', 409);
+          if(archives&&!archives.canSave(store.boardId,token))throw new BoardError('ARCHIVE_BUSY','此窗口已确认退出，正在归档。',409);
           if (bridge?.active?.owner) throw new BoardError('EDITOR_BUSY', 'AI 正在提交或预览，请稍后保存。', 409);
           if (input.aiTransaction) throw new BoardError('INVALID_REQUEST', '普通保存不能声明 AI 事务。');
           leases.renew(token); session.saving=(session.saving??0)+1;

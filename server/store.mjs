@@ -30,7 +30,7 @@ const boardSchema = z.object({
   revision: z.number().int().nonnegative(), title: z.string().min(1).max(80),
   scene: sceneSchema, savedAt: z.string().nullable(),
   requestId: z.string().max(100).nullable(), requestHash: z.string().nullable(),
-  aiTransaction: z.object({ requestId: z.string().uuid(), hash: z.string(), createdIds: z.array(z.string()), affectedIds: z.array(z.string()).optional() }).optional(),
+  aiTransaction: z.object({ requestId: z.string().uuid(), hash: z.string(), createdIds: z.array(z.string()), affectedIds: z.array(z.string()).optional(),idMap:z.record(z.string(),z.string()).optional(),labelMap:z.record(z.string(),z.array(z.string())).optional() }).optional(),
 });
 export const saveSchema = z.object({
   baseRevision: z.number().int().nonnegative(), requestId: z.string().uuid(),

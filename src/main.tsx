@@ -106,7 +106,7 @@ function App() {
   const footerMessage=state.message||(state.board&&!state.connected?'本地服务连接中断；未保存内容请先下载备份。':
     state.board&&!state.writable?state.board.archived?'已归档 · 当前只读':
       state.handoffPending?'等待原窗口结束输入并保存…':'另一窗口编辑 · 当前只读':'');
-  const disabled = !state.writable || Boolean(state.recovery) || state.bridgeBusy || state.switching;
+  const disabled = !state.writable || Boolean(state.recovery) || state.bridgeBusy || state.switching || state.archivePending;
   if(state.page==='library'&&state.board)return <BoardLibrary controller={controller}/>;
   return <main ref={reader.shell} className={`app-shell${reader.reading?' is-reading':''}`}>
     <header className="app-header">

@@ -16,6 +16,7 @@ import type {FormulaInput,FormulaRender} from '../shared/formulas.mjs';
 type SaveStatus = 'loading' | 'saved' | 'dirty' | 'saving' | 'error';
 interface Draft { schemaVersion: 1; scene: Scene; title: string; baseRevision: number; savedAt: string; pendingRequestId?: string; dirty?:boolean }
 interface Snapshot {
+  archivePending: boolean;
   page: 'library' | 'editor'; switching: boolean; editorSessionId: string; handoffPending: boolean;
   board: Board | null; title: string; writable: boolean; connected: boolean;
   status: SaveStatus; message: string; revision: number; lastSaved: string | null;
@@ -29,7 +30,7 @@ class ApiError extends Error { constructor(public code: string, message: string)
 
 export class BoardController {
   private listeners = new Set<() => void>();
-  private state: Snapshot = { page:'editor',switching:false,editorSessionId:'',handoffPending:false,board: null, title: '我的讲解白板', writable: false, connected: false,
+  private state: Snapshot = { archivePending:false,page:'editor',switching:false,editorSessionId:'',handoffPending:false,board: null, title: '我的讲解白板', writable: false, connected: false,
     status: 'loading', message: '', revision: 0, lastSaved: null, count: 0, recovery: null,
     recoveryWarnings: 0, storageWarning: false, mcpSeen: false, editorEpoch: 0, bridgeBusy: false, aiMessage: '', regions: [] };
   private token = '';
@@ -52,6 +53,9 @@ export class BoardController {
   private heartbeatBusy = false;
   private jobTimer: ReturnType<typeof setInterval> | undefined;
   private polling = false;
+  private waitingForJob = false;
+  private archiveRequestId = '';
+  private jobWait:AbortController|null=null;
   private editor: ExcalidrawImperativeAPI | null = null;
   attachEditor = (editor: ExcalidrawImperativeAPI) => { this.editor = editor; };
 
@@ -72,12 +76,12 @@ export class BoardController {
     this.state = { ...this.state, ...patch };
     this.listeners.forEach(listener => listener());
   }
-  private async request<T>(path: string, method = 'GET', payload?: unknown): Promise<T> {
+  private async request<T>(path: string, method = 'GET', payload?: unknown,signal?:AbortSignal): Promise<T> {
     const response = await fetch(`/api/${path}`, { method, headers: {
       ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
       'X-Whiteboard-Board':this.boardId,'X-Whiteboard-Session':this.state.editorSessionId,
       ...(payload === undefined ? {} : { 'Content-Type': 'application/json' }),
-    }, body: payload === undefined ? undefined : JSON.stringify(payload), signal: AbortSignal.timeout(8000) });
+    }, body: payload === undefined ? undefined : JSON.stringify(payload), signal: signal?AbortSignal.any([signal,AbortSignal.timeout(8000)]):AbortSignal.timeout(8000) });
     const data = await response.json();
     if (!response.ok) throw new ApiError(data.code, data.message);
     return data;
@@ -142,7 +146,7 @@ export class BoardController {
     this.heartbeatBusy = true;
     try {
       const editorState=this.state.page==='library'?'library':this.blocked?'blocked':this.state.recovery?'recovery':this.saving?'saving':this.state.bridgeBusy?'ai_busy':!this.editor?'loading':!this.state.writable?'read_only':this.inputActive()?'input_active':this.current!==this.baseline?'unsaved':'ready';
-      const data = await this.request<{ writable: boolean; revision: number; lastMcpCheck: string | null; editorSessionId:string; handoffRequested:boolean; handoffPending:boolean }>('heartbeat', 'POST', {autoClaim:this.state.page==='editor'&&!this.blocked&&!this.state.recovery,editorState});
+      const data = await this.request<{ writable: boolean; revision: number; lastMcpCheck: string | null; editorSessionId:string; handoffRequested:boolean; handoffPending:boolean; archive:ArchiveState|null }>('heartbeat', 'POST', {autoClaim:this.state.page==='editor'&&!this.blocked&&!this.state.recovery&&!this.state.archivePending,editorState});
       const gained=data.writable&&!this.state.writable;
       if(!data.writable&&this.state.writable)this.writeDraft();
       this.set({ connected:true, editorSessionId:data.editorSessionId, handoffPending:data.handoffPending, mcpSeen:Boolean(data.lastMcpCheck) });
@@ -154,11 +158,45 @@ export class BoardController {
         const latest = await this.request<{ board: Board }>('board');
         this.useBoard(latest.board);
       }
-      if(data.handoffRequested)await this.handoff();
+      if(data.archive)await this.handleArchive(data.archive);
+      else if(this.state.archivePending){this.archiveRequestId='';this.set({archivePending:false,message:'归档请求已结束，请刷新白板列表核对结果。'});}
+      if(data.handoffRequested&&!this.state.archivePending)await this.handoff();
     } catch (error) {
       this.set({ connected: false });
       if (error instanceof ApiError && ['SESSION_EXPIRED','BOARD_MISMATCH'].includes(error.code)) await this.connect();
     } finally { this.heartbeatBusy = false; }
+  }
+  private async handleArchive(archive:ArchiveState){
+    if(archive.status==='failed'){
+      if(this.archiveRequestId===archive.requestId){this.archiveRequestId='';this.set({archivePending:false,message:archive.message});}
+      return;
+    }
+    if(archive.status==='complete'){
+      if(this.archiveRequestId!==archive.requestId)return;
+      const {board}=await this.request<{board:Board}>('board');
+      if(!board.archived)throw new Error('尚未确认白板已归档');
+      this.useBoard(board);this.archiveRequestId='';
+      this.set({archivePending:false,writable:false,message:'已保存并归档。若浏览器未自动关闭此标签页，可手动关闭。'});
+      window.close();return;
+    }
+    if(archive.responded||archive.status!=='waiting'||this.archiveRequestId===archive.requestId)return;
+    const unsafe=this.state.recovery||this.blocked||this.inputActive()||this.saving||this.state.bridgeBusy||this.state.switching||this.polling&&!this.waitingForJob;
+    if(unsafe){
+      await this.request('archive/respond','POST',{requestId:archive.requestId,ready:false,message:'编辑窗口正在输入、保存、处理草稿或执行 AI 操作，未归档。请结束操作后重试。'});return;
+    }
+    this.archiveRequestId=archive.requestId;this.set({archivePending:true,message:'正在保存并退出编辑，以便归档…'});
+    try{
+      await this.cancelJobWait();await this.flush();
+      if(this.current!==this.baseline||this.pending||this.blocked||this.state.recovery||this.state.status==='error'){
+        const {archive:failed}=await this.request<{archive:ArchiveState}>('archive/respond','POST',{requestId:archive.requestId,ready:false,message:'编辑窗口有未保存内容或保存失败，未关闭、未归档。请重试保存或备份。'});
+        await this.handleArchive(failed);return;
+      }
+      const {archive:result}=await this.request<{archive:ArchiveState}>('archive/respond','POST',{requestId:archive.requestId,ready:true,revision:this.state.revision});
+      await this.handleArchive(result);
+    }catch(error){
+      // A lost acknowledgement may have committed: keep editing paused until heartbeat confirms the result.
+      this.set({message:error instanceof Error?`等待归档结果：${error.message}`:'正在确认归档结果，请保留此窗口。'});
+    }
   }
   async claim() {
     if(this.state.switching||this.state.handoffPending)return;
@@ -181,9 +219,10 @@ export class BoardController {
     if(!this.blocked&&this.current!==this.baseline)this.schedule();
   }
   private async handoff(){
-    if(!this.state.writable||this.state.switching||this.state.bridgeBusy||this.polling||this.saving||this.inputActive()||this.state.recovery||this.blocked||this.state.status==='error')return;
+    if(!this.state.writable||this.state.switching||this.state.bridgeBusy||this.polling&&!this.waitingForJob||this.saving||this.inputActive()||this.state.recovery||this.blocked||this.state.status==='error')return;
     this.set({switching:true});
     try{
+      await this.cancelJobWait();
       await this.flush();
       if(this.current!==this.baseline||this.pending||this.saving||this.blocked||this.getSnapshot().status==='error')return;
       const result=await this.request<{writable:boolean}>('handoff','POST',{revision:this.state.revision});
@@ -193,7 +232,7 @@ export class BoardController {
     }finally{this.set({switching:false});}
   }
   change = (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
-    if (!this.state.writable || this.state.recovery || this.blocked || this.state.bridgeBusy || this.state.switching) return;
+    if (!this.state.writable || this.state.recovery || this.blocked || this.state.bridgeBusy || this.state.switching || this.state.archivePending) return;
     this.busy = Boolean(appState.editingTextElement || appState.isResizing || appState.isRotating);
     const scene = captureScene(elements, appState, files);
     const value = fingerprint({ title: this.state.title, scene });
@@ -207,9 +246,9 @@ export class BoardController {
     this.draftTimer = setTimeout(() => this.writeDraft(), 150);
     this.schedule();
   };
-  setBusy(value: boolean) { this.pointerBusy = value; if (!value) this.schedule(); }
+  setBusy(value: boolean) { this.pointerBusy = value;if(value)this.jobWait?.abort();if (!value) this.schedule(); }
   title = (value: string) => {
-    if (!this.state.writable || !this.scene || this.state.bridgeBusy || this.state.switching) return;
+    if (!this.state.writable || !this.scene || this.state.bridgeBusy || this.state.switching || this.state.archivePending) return;
     this.set({ title: value.slice(0, 80), status: 'dirty', message: '', aiMessage: '' });
     this.current = fingerprint({ title: this.state.title, scene: this.scene });
     this.writeDraft(); this.schedule();
@@ -308,14 +347,18 @@ export class BoardController {
     return this.busy || this.pointerBusy || ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName ?? '');
   }
   private async pollJobs() {
-    if (this.polling || this.stopped || this.state.switching || this.state.bridgeBusy || this.state.page!=='editor' || !this.editor || !this.token || !this.state.writable || !this.state.connected || this.state.recovery || this.blocked || this.saving || this.inputActive()) return;
+    if (this.polling || this.stopped || this.state.switching || this.state.archivePending || this.state.bridgeBusy || this.state.page!=='editor' || !this.editor || !this.token || !this.state.writable || !this.state.connected || this.state.recovery || this.blocked || this.saving || this.inputActive()) return;
     this.polling = true;
     let job: EditorJob | null = null;
     let selectedIds: string[] | null = null;
+    const timings:Record<string,number>={};
+    let longPoll=false;
     try {
       await this.flush();
       if (this.current !== this.baseline || this.saving || this.inputActive()) return;
-      const response = await this.request<{ job: EditorJob | null }>('jobs/poll', 'POST', {});
+      this.jobWait=new AbortController();this.waitingForJob=true;
+      const response = await this.request<{ job: EditorJob | null;waitSupported?:boolean }>('jobs/poll', 'POST', {waitMs:4500},this.jobWait.signal);
+      this.waitingForJob=false;this.jobWait=null;longPoll=Boolean(response.waitSupported);
       job = response.job;
       if (!job) return;
       if(job.input.boardId && (job.input.boardId!==this.boardId || job.input.editorSessionId!==this.state.editorSessionId))throw new ApiError('BOARD_MISMATCH','白板会话已切换。');
@@ -324,15 +367,20 @@ export class BoardController {
       this.set({ bridgeBusy: true, aiMessage: job.kind === 'patch' ? '正在生成并保存图文…' : job.kind === 'render'||job.kind==='preview' ? '正在生成预览…' : job.kind==='validate'?'正在检查图形…':'正在读取最新白板…' });
       if (job.kind === 'patch'||job.kind==='preview') {
         if (job.input.baseRevision !== this.state.revision) throw new ApiError('REVISION_CONFLICT', '白板已有新修改，请重新读取后生成。');
-        const candidate = isFormulaPatch(job.input,this.scene.elements)?await planFormulaPatch(this.scene,job.input,selectedIds,this.renderFormula):job.input.edits ? await editElements(job.input, this.scene, selectedIds) : { elements: await generateElements(job.input, this.scene), layouts: {} };
+        const generateStarted=performance.now();
+        const candidate = job.kind==='patch'&&job.input.previewId?{}:isFormulaPatch(job.input,this.scene.elements)?await planFormulaPatch(this.scene,job.input,selectedIds,this.renderFormula):job.input.edits ? await editElements(job.input, this.scene, selectedIds) : { elements: await generateElements(job.input, this.scene), layouts: {} };
+        timings.generateMs=performance.now()-generateStarted;
         if(job.kind==='preview'){
           const result=await this.request<{scene:Scene;revision:number}>('jobs/preview','POST',{id:job.id,...candidate,selectedIds});
-          const png=await renderScene(result.scene,undefined,job.input.regionId);
-          await this.request('jobs/result','POST',{id:job.id,revision:result.revision,png});
+          const renderStarted=performance.now();
+          const png=await renderScene(result.scene,job.input.elementIds,job.input.regionId,job.input.includeChildren!==false);
+          timings.renderMs=performance.now()-renderStarted;
+          await this.request('jobs/result','POST',{id:job.id,revision:result.revision,png,timings});
           this.set({aiMessage:'预览完成 · 尚未保存'});return;
         }
-        const result = await this.request<{ board: Board }>('jobs/commit', 'POST', { id: job.id, ...candidate, selectedIds });
+        const result = await this.request<{ board: Board;renderIds?:string[] }>('jobs/commit', 'POST', { id: job.id, ...candidate, selectedIds });
         const board = result.board;
+        const applyStarted=performance.now();
         // Disk commits first. A failed write never displays an unsaved AI candidate.
         // Re-registering unchanged SVGs makes the native editor rewrite their
         // file versions, creating an unrelated save after each AI edit.
@@ -345,15 +393,26 @@ export class BoardController {
         this.baseline = fingerprint({ title: board.title, scene: this.scene }); this.current = this.baseline;
         this.set({ title: board.title, revision: board.revision, lastSaved: board.savedAt, status: 'saved', count: board.scene.elements.filter(element => !element.isDeleted).length, regions: teachingRegions(board.scene.elements) });
         this.writeDraft();
-        await this.request('jobs/result', 'POST', { id: job.id, revision: board.revision });
+        timings.applyMs=performance.now()-applyStarted;
+        let png:string|undefined,renderError:{code:string}|undefined;
+        if(job.input.verification?.render&&result.renderIds){
+          const renderStarted=performance.now();
+          let renderTimer:ReturnType<typeof setTimeout>|undefined;
+          try{png=await Promise.race([renderScene(board.scene,result.renderIds),new Promise<string>((_,reject)=>{renderTimer=setTimeout(()=>reject(new Error('RENDER_TIMEOUT')),6000);})]);}catch{renderError={code:'RENDER_FAILED'};}
+          finally{clearTimeout(renderTimer);}
+          timings.renderMs=performance.now()-renderStarted;
+        }
+        await this.request('jobs/result', 'POST', { id: job.id, revision: board.revision,timings,png,renderError });
         this.set({ aiMessage: job.input.edits ? '已修改 · Ctrl+Z 撤销' : `已新增 ${added.length} 项` });
       } else if (job.kind === 'read'||job.kind==='validate') {
         await this.request('jobs/result', 'POST', { id: job.id, revision: this.state.revision, selectedIds });
         this.set({ aiMessage: `已读取版本 ${this.state.revision}` });
       } else {
         if (job.input.revision !== this.state.revision) throw new ApiError('REVISION_CONFLICT', '预览版本已过期，请重新读取。');
-        const png = await renderScene(this.scene, job.input.elementIds,job.input.regionId);
-        await this.request('jobs/result', 'POST', { id: job.id, revision: this.state.revision, png });
+        const renderStarted=performance.now();
+        const png = await renderScene(this.scene, job.input.elementIds,job.input.regionId,job.input.includeChildren!==false);
+        timings.renderMs=performance.now()-renderStarted;
+        await this.request('jobs/result', 'POST', { id: job.id, revision: this.state.revision, png,timings });
         this.set({ aiMessage: `已生成版本 ${this.state.revision} 的预览` });
       }
     } catch (error) {
@@ -374,6 +433,8 @@ export class BoardController {
         }
       }
       this.polling = false;
+      this.waitingForJob=false;this.jobWait=null;
+      if(longPoll&&!this.stopped&&!this.state.switching) setTimeout(()=>void this.pollJobs(),0);
     }
   }
   private pageHide = () => {
@@ -388,11 +449,13 @@ export class BoardController {
     catch{this.set({storageWarning:true});}
   }
   async leaveEditor(target?:string){
-    if(this.state.switching||this.state.bridgeBusy||this.polling||this.saving||this.busy||this.pointerBusy||this.state.recovery)throw new Error('请先结束编辑或处理草稿，再切换白板。');
+    if(this.state.archivePending)throw new Error('正在确认归档结果，请等待保存完成。');
+    if(this.state.switching||this.state.bridgeBusy||this.polling&&!this.waitingForJob||this.saving||this.busy||this.pointerBusy||this.state.recovery)throw new Error('请先结束编辑或处理草稿，再切换白板。');
     await this.flush();
     if(this.current!==this.baseline||this.saving||this.pending||this.blocked||!this.state.connected)throw new Error('当前内容尚未保存，请先重试保存或备份。');
     this.set({switching:true});
     try{
+      await this.cancelJobWait();
       // Do not let a heartbeat response from the previous board arrive after the switch.
       while(this.heartbeatBusy)await new Promise(resolve=>setTimeout(resolve,25));
       this.writeDraft();clearTimeout(this.timer);clearTimeout(this.draftTimer);
@@ -409,11 +472,31 @@ export class BoardController {
   createBoard=()=>this.request<{board:Board}>('boards/create','POST',{title:'未命名白板'});
   copyBoard=(board:BoardEntry)=>this.request<{board:Board}>('boards/copy','POST',{boardId:board.boardId,baseRevision:board.revision});
   changeBoard=(board:BoardEntry,change:{title?:string;archived?:boolean})=>this.request('boards/change','POST',{boardId:board.boardId,baseRevision:board.revision,...change});
+  async archiveBoard(board:BoardEntry,onProgress:(message:string)=>void){
+    const requestId=crypto.randomUUID();
+    let archive:ArchiveState;
+    try{({archive}=await this.request<{archive:ArchiveState}>('boards/archive','POST',{boardId:board.boardId,baseRevision:board.revision,requestId}));}
+    catch(error){
+      if(error instanceof ApiError)throw error;
+      ({archive}=await this.request<{archive:ArchiveState}>(`boards/archive-status?boardId=${encodeURIComponent(board.boardId)}&requestId=${requestId}`));
+    }
+    try{
+      while(archive.status==='waiting'||archive.status==='saving'){
+        onProgress(archive.status==='saving'?'正在归档…':`等待 ${archive.waiting} 个窗口保存并退出编辑…`);
+        await new Promise(resolve=>setTimeout(resolve,500));
+        ({archive}=await this.request<{archive:ArchiveState}>(`boards/archive-status?boardId=${encodeURIComponent(board.boardId)}&requestId=${requestId}`));
+      }
+    }catch{throw new Error('连接中断，归档结果尚未确认。恢复连接后请刷新白板列表核对。');}
+    if(archive.status!=='complete')throw new Error(archive.message||'归档未完成，内容保留。');
+  }
   stop() {
+    this.jobWait?.abort();
     this.stopped = true; clearInterval(this.heartbeat); clearInterval(this.jobTimer); clearTimeout(this.timer); clearTimeout(this.draftTimer);
     window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('pagehide', this.pageHide);
     window.removeEventListener('pageshow',this.pageShow);
     document.removeEventListener('visibilitychange', this.visibilityChange);
   }
+  private async cancelJobWait(){this.jobWait?.abort();while(this.waitingForJob)await new Promise(resolve=>setTimeout(resolve,10));}
 }
-export interface BoardEntry {boardId:string;title:string;revision:number;savedAt:string|null;archived:boolean;count:number;recoveryWarnings:number}
+export interface BoardEntry {boardId:string;title:string;revision:number;savedAt:string|null;archived:boolean;count:number;recoveryWarnings:number;openEditors?:number}
+interface ArchiveState {requestId:string;boardId:string;status:'waiting'|'saving'|'complete'|'failed';message:string;waiting:number;responded?:boolean}

@@ -7,6 +7,7 @@ import {isFormulaPatch,planFormulaPatch} from '../shared/formulas.mjs';
 import {patchShape,patchSchema,readShape,renderShape,validateShape,previewShape,previewSchema,elementId} from './authoring-schema.mjs';
 import {meta,bounds,regionDefinitions,regionMembers,validateDiagram,checkNewCollisions,itemMetadata,assignRoute} from '../shared/diagram.mjs';
 import {needsDiagramEdits,planDiagramEdits} from '../shared/diagram-edits.mjs';
+import {mutationInput,relatedIds,aliasMaps} from './agent-results.mjs';
 export {patchShape,patchSchema,readShape,renderShape,validateShape,previewShape};
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -16,7 +17,14 @@ export function describeBoard(board, selectedIds = [], input = { scope: 'all', l
   const live = board.scene.elements.filter(element => !element.isDeleted);
   const selection = selectedIds.filter(id => live.some(element => element.id === id));
   let relevant = live;
-  if(input.regionId)relevant=regionMembers(live,input.regionId);
+  if(input.regionId)relevant=regionMembers(live,input.regionId,input.includeChildren!==false);
+  if(input.elementIds){
+    if(input.summary||input.scope==='selection'||new Set(input.elementIds).size!==input.elementIds.length)throw new BoardError('INVALID_READ','指定 ID 读取不能混用摘要或选区，且 ID 必须唯一。');
+    const available=new Set(relevant.map(e=>e.id));
+    if(input.elementIds.some(id=>!available.has(id)))throw new BoardError('TARGET_MISSING','指定对象不存在或不属于读取分区。',409);
+    const ids=input.includeRelated?relatedIds(live,input.elementIds,true):new Set(input.elementIds);
+    relevant=live.filter(e=>ids.has(e.id));
+  }
   if (input.scope === 'selection') {
     if (!selection.length) throw new BoardError('EMPTY_SELECTION', '请先选中图元，或使用 scope=all。', 409);
     const ids = new Set(selection);
@@ -32,18 +40,39 @@ export function describeBoard(board, selectedIds = [], input = { scope: 'all', l
   const page=input.summary?[]:relevant.slice(offset,offset+limit);
   return { boardId: board.boardId, title: board.title, revision: board.revision, savedAt: board.savedAt,
     selectedIds: selection, total: relevant.length, bounds:bounds(relevant),regions,offset,nextOffset:!input.summary&&offset+page.length<relevant.length?offset+page.length:null,truncated:input.summary?false:offset+page.length<relevant.length,
-    elements: page.map(element => ({ id: element.id, type: element.type, x: element.x, y: element.y,
+    ...(input.elementIds||input.detail?{coverage:{requestedIds:input.elementIds??null,detail:input.detail??'full',includeRelated:Boolean(input.includeRelated)}}:{}),
+    elements: page.map(element => {const full={ id: element.id, type: element.type, x: element.x, y: element.y,
       width: element.width, height: element.height, angle: element.angle, frameId: element.frameId, text: element.text, originalText: element.originalText, fontSize: element.fontSize,
       fontFamily: element.fontFamily, strokeColor: element.strokeColor, backgroundColor: element.backgroundColor,
       locked: element.locked, containerId: element.containerId, boundElements: element.boundElements,
       startBinding: element.startBinding, endBinding: element.endBinding, points: element.points,
       strokeWidth:element.strokeWidth,strokeStyle:element.strokeStyle,roughness:element.roughness,diagram:meta(element),
-      ...(element.customData?.formula?{formula:element.customData.formula,text:`$$${element.customData.formula.latex}$$`}:{}) })) };
+      ...(element.customData?.formula?{formula:element.customData.formula,text:`$$${element.customData.formula.latex}$$`}:{}) };
+      if(input.detail==='text')return Object.fromEntries(['id','type','text','originalText','formula','locked','containerId','boundElements','startBinding','endBinding','diagram'].filter(k=>full[k]!==undefined).map(k=>[k,full[k]]));
+      if(input.detail==='layout'){const {text,originalText,formula,...layout}=full;return layout;}
+      return full;}) };
 }
 
 // One job owns a short commit window. Rendering and font measurement stay in the real editor.
 export class EditorBridge {
-  constructor(store, { timeout = 20000, allowEdits = false } = {}) { this.store = store; this.timeout = timeout; this.allowEdits = allowEdits; this.active = null; }
+  constructor(store, { timeout = 20000, allowEdits = false,previewTtl=120000 } = {}) { this.store = store; this.timeout = timeout; this.allowEdits = allowEdits; this.active = null;this.previews=new Map();this.previewTtl=previewTtl;this.waiters=new Set(); }
+  wait(waitMs,signal){
+    if(!waitMs||this.active&&!this.active.owner||signal?.aborted)return Promise.resolve();
+    return new Promise(resolve=>{
+      const done=()=>{clearTimeout(timer);signal?.removeEventListener('abort',done);this.waiters.delete(done);resolve();};
+      const timer=setTimeout(done,waitMs);this.waiters.add(done);signal?.addEventListener('abort',done,{once:true});
+    });
+  }
+  prunePreviews(){
+    for(const [id,p] of this.previews)if(p.expiresAt<Date.now()||p.baseRevision!==this.store.board.revision)this.previews.delete(id);
+  }
+  prepared(input,selectedIds){
+    this.prunePreviews();const p=this.previews.get(input.previewId);
+    if(!p)throw new BoardError('PREVIEW_EXPIRED','候选已过期或版本已变化，请重新读取并预览。',409);
+    if(p.requestHash!==hash(mutationInput(input))||p.boardId!==this.store.boardId||p.editorSessionId!==input.editorSessionId||p.baseRevision!==this.store.board.revision||p.sceneHash!==hash(this.store.board.scene))throw new BoardError('PREVIEW_MISMATCH','候选身份、内容或基础版本不一致，请重新预览。',409);
+    if(input.edits?.some(e=>e.target==='$selection')&&!isDeepStrictEqual(p.selectedIds,[...selectedIds].sort()))throw new BoardError('SELECTION_CHANGED','选区已变化，请重新读取并预览。',409);
+    return p;
+  }
   status(requestId) {
     const receipt = requestId ? this.store.aiTransactions.get(requestId) : undefined;
     return { busy: Boolean(this.active), operation: this.active?.kind ?? null, transaction: receipt ?? null };
@@ -51,7 +80,11 @@ export class EditorBridge {
   invoke(kind, raw) {
     const input = kind==='preview'?previewSchema.parse(raw):kind==='patch'?patchSchema.parse(raw):kind === 'read' ? z.object(readShape).strict().parse(raw) : kind==='validate'?z.object(validateShape).strict().parse(raw):z.object(renderShape).strict().parse(raw);
     if(input.boardId && input.boardId!==this.store.boardId)throw new BoardError('BOARD_MISMATCH','目标白板不匹配，请重新读取。',409);
-    const requestHash = hash(input);
+    if(kind==='read'&&input.source==='saved'){
+      if(input.revision===undefined||!input.boardId||!input.editorSessionId||input.scope==='selection')throw new BoardError('INVALID_READ','已保存读取必须指定白板、会话及版本，不能读取实时选区。');
+      return Promise.resolve({...describeBoard(this.store.read(),[],input),source:'saved',liveSelection:false,timings:{queueMs:0}});
+    }
+    const requestHash = hash(kind==='patch'?mutationInput(input):input);
     if (kind === 'patch') {
       const previous = this.store.aiTransactions.get(input.requestId);
       if (previous) {
@@ -66,8 +99,9 @@ export class EditorBridge {
     }
     let complete;
     const promise = new Promise(resolve => { complete = resolve; });
-    const job = { id: randomUUID(), kind, input, hash: requestHash, owner: null, promise, complete, committed: null, committing: false };
+    const job = { id: randomUUID(), kind, input, hash: requestHash, owner: null, promise, complete, committed: null, committing: false,started:performance.now(),timings:{} };
     this.active = job;
+    for(const wake of [...this.waiters])wake();
     job.timer = setTimeout(() => {
       // A disk commit is never cancelled mid-write; the caller can query its receipt.
       if (job.committing) return;
@@ -80,6 +114,7 @@ export class EditorBridge {
     const job = this.active;
     if (!job || job.owner) return null;
     job.owner = owner;
+    job.timings.queueMs=performance.now()-job.started;
     return { id: job.id, kind: job.kind, input: job.input };
   }
   get(owner, id) {
@@ -89,9 +124,12 @@ export class EditorBridge {
   }
   finish(job, result) {
     if (this.active !== job) return;
-    clearTimeout(job.timer); this.active = null; job.complete(result);
+    clearTimeout(job.timer); this.active = null;
+    const timings={...job.timings,totalMs:performance.now()-job.started};
+    job.complete({...result,timings,resultBytes:Buffer.byteLength(JSON.stringify(result))});
   }
   async candidate(job, raw) {
+    const started=performance.now();
     const board = this.store.read();
     if (board.revision !== job.input.baseRevision) throw new BoardError('REVISION_CONFLICT', '人工内容已保存为新版本，请重新读取后生成。', 409);
     let candidate = sceneSchema.parse({ ...board.scene, elements: raw.elements });
@@ -142,12 +180,17 @@ export class EditorBridge {
     }
     const ids = candidate.elements.slice(board.scene.elements.length).map(element => element.id);
     if(this.store.board.revision!==board.revision)throw new BoardError('REVISION_CONFLICT','测量期间白板已变化，请重新读取。',409);
+    job.timings.candidateCheckMs=performance.now()-started;
     return {board,candidate,ids,affectedIds};
   }
   async preview(owner,id,raw){
     const job=this.get(owner,id);if(job.kind!=='preview')throw new BoardError('INVALID_JOB','不是提交前预览请求。');
     const planned=await this.candidate(job,raw);this.get(owner,id);
-    job.preview={validation:validateDiagram(planned.candidate.elements,{regionId:job.input.regionId}),createdIds:planned.ids,affectedIds:planned.affectedIds};
+    const requested=job.input.elementIds??(job.input.regionId?regionMembers(planned.candidate.elements,job.input.regionId,job.input.includeChildren!==false).map(e=>e.id):null);
+    const scope=requested?[...relatedIds(planned.candidate.elements,requested,true)]:undefined;
+    job.preview={validation:validateDiagram(planned.candidate.elements,{elementIds:scope}),validationCoverage:{source:'candidate',baseRevision:planned.board.revision,elementIds:scope??null},createdIds:planned.ids,affectedIds:planned.affectedIds};
+    const {regionId,elementIds,includeChildren,...input}=job.input;
+    job.prepared={...planned,sceneHash:hash(planned.board.scene),requestHash:hash(mutationInput(input)),boardId:this.store.boardId,editorSessionId:job.input.editorSessionId,baseRevision:planned.board.revision,selectedIds:[...(raw.selectedIds??[])].sort()};
     return {scene:planned.candidate,revision:planned.board.revision,...job.preview};
   }
   async commit(owner, id, raw) {
@@ -155,17 +198,43 @@ export class EditorBridge {
     if (job.kind !== 'patch') throw new BoardError('INVALID_JOB', '操作类型不符。');
     if (job.committed) return { board: this.store.read(), receipt: job.committed };
     if (job.committing) throw new BoardError('EDITOR_BUSY', '正在提交，请查询状态。', 409);
-    const {board,candidate,ids,affectedIds}=await this.candidate(job,raw);
+    const planned=job.input.previewId?this.prepared(job.input,raw.selectedIds??[]):await this.candidate(job,raw);
+    const {board,candidate,ids,affectedIds}=planned;
+    job.timings.preparedCacheHit=Boolean(job.input.previewId);
     this.get(owner,id);
-    const aiTransaction = { requestId: job.input.requestId, hash: job.hash, createdIds: ids, affectedIds };
+    const maps=aliasMaps(job.input,candidate.elements);
+    const aiTransaction = { requestId: job.input.requestId, hash: job.hash, createdIds: ids, affectedIds,...maps };
     job.committing = true;
     try {
+      const saveStarted=performance.now();
       const result = await this.store.save({ baseRevision: job.input.baseRevision, requestId: job.input.requestId,
         title: board.title, scene: candidate, aiTransaction });
-      job.committed = { boardId: this.store.boardId, requestId: job.input.requestId, revision: result.board.revision, createdIds: ids, affectedIds, duplicate: false };
+      job.timings.saveMs=performance.now()-saveStarted;
+      job.committed = { boardId: this.store.boardId, requestId: job.input.requestId, revision: result.board.revision, createdIds: ids, affectedIds,...maps,saved:true, duplicate: false };
+      if(job.input.returnElements){
+        const changed=[...new Set([...ids,...affectedIds])];
+        job.committed.changes={...describeBoard(result.board,[],{elementIds:changed.slice(0,100),includeRelated:job.input.includeRelated,limit:500}),changedTotal:changed.length,changedIdsTruncated:changed.length>100};
+      }
+      this.previews.clear();
+      const options=job.input.verification;
+      if(options){
+        try{
+          const changed=[...new Set([...ids,...affectedIds])];
+          let requested=options.elementIds??(options.regionId?regionMembers(candidate.elements,options.regionId,options.includeChildren!==false).map(e=>e.id):changed);
+          if(!requested.length)throw new BoardError('EMPTY_SCOPE','没有可验收的对象。');
+          const live=new Set(candidate.elements.filter(e=>!e.isDeleted).map(e=>e.id));
+          if(requested.some(id=>!live.has(id)))throw new BoardError('TARGET_MISSING','验收对象不存在。');
+          const scope=relatedIds(candidate.elements,requested,true);
+          const coverage={source:'saved',revision:result.board.revision,scope:options.elementIds?'elements':options.regionId?'region':'changes',elementIds:[...scope],includeChildren:options.includeChildren!==false};
+          job.committed.verification={coverage};
+          if(options.validate){const started=performance.now(),report=validateDiagram(candidate.elements,{elementIds:[...scope],minFontSize:options.minFontSize??24});job.committed.verification.validation=report;job.timings.validationMs=performance.now()-started;}
+          // Use the exact requested view; related endpoints remain in validation.
+          job.renderIds=requested;
+        }catch(error){job.committed.verification={error:{code:error.code??'VERIFICATION_FAILED',message:'已保存，验收范围未完成；请按保存版本重新检查。'}};}
+      }
       clearTimeout(job.timer);
       job.timer = setTimeout(() => this.finish(job, { ...job.committed, applied: false }), this.timeout);
-      return { board: result.board, receipt: job.committed };
+      return { board: result.board, receipt: job.committed,renderIds:job.renderIds };
     } catch (error) {
       this.finish(job, { error: { code: error instanceof BoardError ? error.code : 'SAVE_FAILED', message: '保存未完成，请重新读取白板后重试。' } });
       if (!(error instanceof BoardError) && !(error instanceof z.ZodError)) throw new BoardError('SAVE_FAILED', '磁盘写入失败；原有白板未被改动。', 503);
@@ -174,6 +243,7 @@ export class EditorBridge {
   }
   result(owner, id, value) {
     const job = this.get(owner, id);
+    if(value.timings){const ms=z.number().finite().nonnegative().max(300000);job.timings.browser=z.object({generateMs:ms.optional(),renderMs:ms.optional(),applyMs:ms.optional()}).strict().parse(value.timings);}
     if (value.error) {
       this.finish(job, job.committed ? { ...job.committed, applied: false } : { error: { code: String(value.error.code ?? 'EDITOR_ERROR').slice(0,80), message: String(value.error.message ?? '操作失败').slice(0,500) } });
       return;
@@ -181,21 +251,41 @@ export class EditorBridge {
     if (value.revision !== this.store.board.revision) throw new BoardError('REVISION_CONFLICT', '内容版本已变化，请重新读取。', 409);
     if (job.kind === 'patch') {
       if (!job.committed) throw new BoardError('NOT_COMMITTED', '尚未保存。', 409);
+      if(job.input.verification?.render&&job.committed.verification?.coverage){
+        if(value.png){try{job.committed.png=validPng(value.png);}catch{job.committed.verification.renderError={code:'INVALID_PREVIEW',message:'已保存，返回图片无效；按保存版本重新渲染。'};}}
+        else job.committed.verification.renderError={code:value.renderError?.code??'RENDER_UNCONFIRMED',message:'已保存，图片未完成；按保存版本重新渲染。'};
+      }
       this.finish(job, { ...job.committed, applied: true });
     } else if (job.kind === 'read') {
       const selected = z.array(z.string().max(200)).max(2000).parse(value.selectedIds ?? []);
-      this.finish(job, describeBoard(this.store.read(), selected, job.input));
+      this.finish(job, {...describeBoard(this.store.read(), selected, job.input),source:'live'});
     } else if(job.kind==='validate'){
       if(job.input.revision!==value.revision)throw new BoardError('REVISION_CONFLICT','检查版本已变化。',409);
+      if(job.input.elementIds){
+        const available=job.input.regionId?regionMembers(this.store.board.scene.elements,job.input.regionId,job.input.includeChildren!==false):this.store.board.scene.elements.filter(e=>!e.isDeleted),ids=new Set(available.map(e=>e.id));
+        if(job.input.elementIds.some(id=>!ids.has(id)))throw new BoardError('TARGET_MISSING','检查对象不存在或不属于该分区。',409);
+      }
       this.finish(job,{boardId:this.store.boardId,revision:value.revision,...validateDiagram(this.store.board.scene.elements,job.input)});
     } else {
       if ((job.kind==='preview'?job.input.baseRevision:job.input.revision) !== value.revision) throw new BoardError('REVISION_CONFLICT', '预览请求不是当前版本。', 409);
       if(job.kind==='preview'&&!job.preview)throw new BoardError('INVALID_PREVIEW','候选图尚未通过校验。');
-      const png = z.string().max(8_000_000).parse(value.png);
-      const bytes = Buffer.from(png, 'base64');
-      if (bytes.length < 24 || bytes.subarray(0,8).toString('hex') !== '89504e470d0a1a0a' || bytes.readUInt32BE(16) > 1600 || bytes.readUInt32BE(20) > 1600) throw new BoardError('INVALID_PREVIEW', '预览图片无效或尺寸超限。');
+      const png=validPng(value.png),bytes=Buffer.from(png,'base64');
+      if(job.kind==='preview'){
+        this.prunePreviews();const p=job.prepared;
+        const bytes=Buffer.byteLength(JSON.stringify(p.candidate));
+        if(bytes<=8_000_000){
+          while(this.previews.size>=4||[...this.previews.values()].reduce((n,v)=>n+v.bytes,0)+bytes>16_000_000)this.previews.delete(this.previews.keys().next().value);
+          const previewId=randomUUID();this.previews.set(previewId,{...p,bytes,expiresAt:Date.now()+this.previewTtl});job.preview.previewId=previewId;job.preview.expiresInMs=this.previewTtl;
+        }
+      }
       this.finish(job, { boardId: this.store.boardId, revision: value.revision,...(job.kind==='preview'?{saved:false,...job.preview}:{}), png, mimeType: 'image/png', width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) });
     }
   }
-  close() { if (this.active) this.finish(this.active, { error: { code: 'EDITOR_OFFLINE', message: '服务正在关闭，请稍后重新读取。' } }); }
+  close() { this.previews.clear();for(const wake of [...this.waiters])wake();if (this.active) this.finish(this.active, { error: { code: 'EDITOR_OFFLINE', message: '服务正在关闭，请稍后重新读取。' } }); }
+}
+
+function validPng(value){
+  const png=z.string().max(8_000_000).parse(value),bytes=Buffer.from(png,'base64');
+  if(bytes.length<24||bytes.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'||bytes.readUInt32BE(16)<1||bytes.readUInt32BE(20)<1||bytes.readUInt32BE(16)>1600||bytes.readUInt32BE(20)>1600)throw new BoardError('INVALID_PREVIEW','预览图片无效或尺寸超限。');
+  return png;
 }

@@ -103,11 +103,11 @@ export function assignRoute(arrow,from,to,options,elements){
   arrow.customData={...arrow.customData,whiteboard:{...meta(arrow),connection:{fromPort:r.fromPort,toPort:r.toPort,route:r.route,...(r.via?{via:r.via}:{}),endArrowhead:r.endArrowhead}}};
   return arrow;
 }
-export function validateDiagram(elements,{regionId,minFontSize=24}={}){
-  const live=elements.filter(e=>!e.isDeleted),scope=regionId?regionMembers(live,regionId):live,ids=new Set(scope.map(e=>e.id)),issues=[];
+export function validateDiagram(elements,{regionId,elementIds,includeChildren=true,minFontSize=24}={}){
+  const live=elements.filter(e=>!e.isDeleted),members=regionId?regionMembers(live,regionId,includeChildren):live,requested=elementIds?new Set(elementIds):null,scope=requested?members.filter(e=>requested.has(e.id)):members,ids=new Set(scope.map(e=>e.id)),issues=[];
   const issue=(code,targets,message,severity='warning')=>{if(targets.some(id=>ids.has(id))&&issues.length<200)issues.push({code,severity,elementIds:targets,message});};
   try{checkRegions(live);}catch(e){issue(e.code,scope.map(e=>e.id),e.message,'error');}
-  for(const e of scope){
+  for(const e of (requested?live.filter(e=>ids.has(e.id)||e.type==='arrow'):scope)){
     if(e.type==='text'&&e.fontSize<minFontSize)issue('SMALL_TEXT',[e.id],`字号 ${e.fontSize} 小于检查阈值 ${minFontSize}。`);
     if(e.type==='text'&&e.containerId){const p=live.find(p=>p.id===e.containerId);if(p&&!contains(p,e,4))issue('TEXT_OVERFLOW',[e.id,p.id],'绑定文字超出框体。','error');if(p&&e.height/p.height<0.2&&e.width/p.width<0.4)issue('LOW_DENSITY',[p.id,e.id],'短文字占框体比例偏小，可收紧框体。');}
     const id=meta(e)?.regionId,container=id?live.find(p=>meta(p)?.region?.id===id):undefined;
@@ -119,13 +119,13 @@ export function validateDiagram(elements,{regionId,minFontSize=24}={}){
         if(node&&points[index]){const candidates=port?[port]:Object.keys(normals);if(!candidates.some(p=>{const q=portPoint(node,p,binding.gap??12);return Math.hypot(q[0]-points[index][0],q[1]-points[index][1])<=2;}))issue('PORT_OFFSET',[e.id,node.id],'箭头端点未落在边中点。');}
       }
       if(meta(e)?.connection?.route==='orthogonal'&&points.slice(1).some((p,i)=>p[0]!==points[i][0]&&p[1]!==points[i][1]))issue('DIAGONAL_ROUTE',[e.id],'直角连接包含斜线段。');
-      const endpointIds=[e.startBinding?.elementId,e.endBinding?.elementId];
+      const endpointIds=[e.startBinding?.elementId,e.endBinding?.elementId].filter(Boolean);
       for(const p of live.filter(p=>!['arrow','line'].includes(p.type)&&meta(p)?.role!=='container'&&!endpointIds.includes(p.id)&&!endpointIds.includes(p.containerId)))if(points.slice(1).some((q,i)=>intersects(points[i],q,p)))issue('EDGE_CROSSING',[e.id,p.id],'连接穿过文字或图形。');
     }
   }
-  const content=scope.filter(e=>!['arrow','line'].includes(e.type)&&meta(e)?.role!=='container');
+  const content=(requested?live:scope).filter(e=>!['arrow','line'].includes(e.type)&&meta(e)?.role!=='container');
   for(let i=0;i<content.length;i++)for(let j=i+1;j<content.length;j++){
-    const a=content[i],b=content[j];if(a.containerId===b.id||b.containerId===a.id)continue;
+    const a=content[i],b=content[j];if(requested&&!ids.has(a.id)&&!ids.has(b.id)||a.containerId===b.id||b.containerId===a.id)continue;
     if(a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y)issue('CONTENT_OVERLAP',[a.id,b.id],'内容包围盒相交，请检查遮挡。');
   }
   return {checked:scope.length,bounds:bounds(scope),issueCount:issues.length,truncated:issues.length>=200,issues,limits:'几何检查不能判断知识、数学推导或视觉美感；仍需查看真实预览。'};

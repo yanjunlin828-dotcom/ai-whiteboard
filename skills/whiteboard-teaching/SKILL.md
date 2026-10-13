@@ -52,15 +52,15 @@ description: 使用本地 ai-whiteboard MCP 生成、修改和验收中文讲解
 
 1. 确认讲解目标、范围与资料。已有图按反馈局部修改，不另画替代品；重画须有明确授权。`board_status` 确认标题与编辑页，多板时从 editors 选择正确目标，不猜当前板。
 
-2. `board_read(summary=true)` 同步本次身份、revision、边界与分区，再按 regionId 或 offset/limit/nextOffset 读取。所有页携带同一 revision，版本变化则重读；后续工具原样携带 boardId、editorSessionId，切板或交接后重新读取。按 readyReason 处理未保存、输入、离线与恢复状态；宿主缓存旧定义时刷新连接，不省略身份。
+2. `board_read(summary=true)` 同步身份、revision、边界与分区。局部修改优先 elementIds+includeRelated 读取目标、标签与连接；大范围按分区或分页读取。已取得身份后，可用 source=saved 读取固定保存版本，不代表当前草稿或实时选区。分页固定 revision，版本、切板或交接变化时重读；后续携带 boardId、editorSessionId。按 readyReason 处理等待。新参数不可见或 status.featureFlags 未启用时沿用旧流程。
 
 3. 复杂图按 authoring 形成内容方案：共同骨架、差异归属、整体模块、必要深度与资料边界；再按 layout 形成图形方案：核心视图、各部分表达方式与理由、包含和连接、就近详解、字号和颜色。先安排内容职责，再安排坐标。规划用简洁段落或表格，复杂长任务按需留存；简单图和局部修改合并相关步骤。普通流程连续执行，不默认逐步等待审批。
 
-4. 先画核心及理解核心所需的内部关系，预览确认整体可辨，再就近补局部对照、机制小图、公式和说明；补充后复看核心是否被撑散或遮住。使用 items 分区生成或 edits 局部修改；baseRevision 来自最新读取，requestId 为新 UUID，跨批连接使用回读的真实 ID。先 `board_preview` 检查候选 PNG 和 validation，再以相同内容、同一 requestId 提交 `board_patch`，去掉 preview 专用 regionId；预览不预留版本，版本变化要重新读取与预览。工具字段见 tools，不能杜撰。
+4. 先画核心及必要内部关系，实际查看预览后就近补详解，补充后复看核心。使用 items 或 edits；baseRevision 来自最新读取，requestId 为新 UUID，跨批连接使用提交 idMap 或回读的真实 ID。先 board_preview 查看候选 PNG 和 validation，再以相同内容、requestId 提交；返回 previewId 时携带它复用候选，移除预览顶层 regionId/elementIds/includeChildren。候选不预留版本，过期、版本、会话或依赖选区变化须重读并预览。工具字段见 tools。
 
 5. 超时用 `board_status(boardId=原板,requestId=原请求)` 查询回执；已提交不换 ID 重发。applied=false 也可能已保存，回读核对。锁定、身份冲突与未确认连接时停止该写入；可恢复错误按 tools 处理。使用 `$selection` 时附本次 selectedIds。
 
-6. 保存后回读，以最新 revision 使用 `board_validate` 与 `board_render`，按 acceptance 检查核心、全图和必要局部。核心独立可讲，共同职责与差异归属清楚；全图保持主次；局部核对正文、公式、端口、遮挡和文字占比。几何报告不能证明语义或资料正确。记录与验证深度按修改范围及用户要求，不自动扩展成模型实验或大规模测试。
+6. 按需用 patch.returnElements 和 verification(validate/render) 一起取得保存后结果。只有 saved/applied、版本、changes 覆盖与截断、verification.coverage 和实际图片满足本次验收时，才能替代对应的独立回读、validate、render；缺项、截断、版本变化或图片失败时按保存版本补查，不能重发已保存修改。按 acceptance 实际检查核心、全图和必要局部；几何报告不证明语义或资料正确。旧接口沿用保存后回读、验证和渲染。
 
 7. 按失败原因修正对应环节与邻居，保留原笔画与公式源码。重复采用同一方案仍无改善时改换表达或说明具体限制，避免盲目整板重排。撤销等操作测试按需要在隔离环境进行。完成时给出入口、主要变化、实际检查与未验证项，不把候选预览当成已保存。
 

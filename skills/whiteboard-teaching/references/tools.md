@@ -1,6 +1,15 @@
 # MCP 参数与工作流
 
-以宿主实际工具定义为准。版本 0.3 提供 status、read、preview、patch、validate、render 六个工具。若新增工具或字段不可见，刷新 MCP 连接；项目 SDK 能验证协议，但不等于宿主已刷新。
+以宿主实际工具定义为准。版本 0.4 仍提供六个工具，兼容旧调用。status.featureFlags 表明后端能力；宿主同时必须可见新参数。未同时满足时沿用旧流程；SDK 测试不等于宿主已刷新。
+
+## 0.4 的高效调用
+
+- 局部读取用 elementIds（1–100个真实 ID）+includeRelated=true；detail=text/layout/full，full 为原有完整字段。text 保留文字与公式源码，layout 省略正文与源码；省略不等于不存在。检查 coverage、truncated、nextOffset；关联扩展可能超出原分区。
+- source=saved 必须携带 boardId、editorSessionId、revision，只读保存版本，不同步草稿或实时选区；默认 live 保持原同步语义，写入仍复核版本。
+- previewId 默认有效120秒，容量不足时不提供，沿用普通提交。patch 传同一内容、requestId 和句柄，移除预览顶层视图参数。PREVIEW_EXPIRED/PREVIEW_MISMATCH/SELECTION_CHANGED 时重读并预览，句柄不锁定版本。
+- patch 返回 idMap、labelMap；returnElements=true 返回变化内容，includeRelated=true 扩展关联对象。检查 changes.changedIdsTruncated 和 truncated；旧回执可能无映射或内容，需要补读。
+- verification:{validate:true,render:true,elementIds?,regionId?,includeChildren?,minFontSize?} 返回保存后检查与 PNG；默认检查变化及关联对象，图片聚焦请求范围并含绑定文字。coverage 标记保存版本与检查对象；默认变化视图不替代复杂图整体阅读。验收与图片失败独立于 saved/applied，按保存版本补查。
+- timings 区分服务端与浏览器阶段，不跨端直接相减。重复 requestId 只返回原事务，不保证重新附带图片；不能为取得图片重复写入。
 
 ## 身份、分页与事务
 
@@ -9,7 +18,7 @@
 - preview/patch 必须传 boardId、editorSessionId、baseRevision、requestId，且 flow/items/edits 三选一。每批 items 或 edits 最多40；原生绑定文字也计入新增图元上限100。
 - preview 返回 saved=false、PNG、validation、createdIds、affectedIds，不改变候选相关的磁盘版本或撤销历史。工具执行前仍会同步页面已有草稿。预览专用 regionId 在 patch 时去掉；内容和 requestId 相同。它不预留版本。
 - validate/render 使用已保存的最新 revision。regionId 可包含该主区的子详解；render 的 elementIds 最多100并包含绑定文字。
-- 已保存核心的 board_render 可按本次回读的核心成员 ID 传 elementIds，不为导航强行加容器。board_preview 不支持 elementIds，仅支持可选 regionId；候选核心先于外围详解绘制时检查其 PNG，后续候选按支持的区域检查，保存后再复看核心。regionId 包含外围子详解时可能使核心被缩得很小。核心超过100项时分视图核对，并在实际编辑页检查整体阅读，不把工具选择上限变成内容上限。
+- 核心视图可用 elementIds，不为导航强行加容器；preview、render 和 verification 支持该范围。regionId 默认含子详解，includeChildren=false 排除子区。核心超过100项时分视图核对，并检查整体阅读，不把选择上限变成内容上限。
 - 请求超时必须 status(boardId,requestId) 查询原板回执。transaction 存在时回读，禁止新 UUID 重复生成。候选预览没有保存回执。
 
 ## 分区与样式
@@ -60,6 +69,7 @@ target 默认真实 ID；$selection 必须附刚读取的 selectionIds。改字�
 | 信号 | 下一步 |
 |---|---|
 | readyReason=input_active/unsaved/saving | 结束输入并等待保存；不要争抢编辑权 |
+| EDITOR_NOT_READY | 最近心跳提示输入、恢复或冲突，处理后重查状态；不抢占输入 |
 | stale_heartbeat/loading/offline | 回到用户目标编辑页；只按状态重查，不不停发送写入 |
 | blocked/recovery | 先处理草稿；保留可下载的内容 |
 | REVISION_CONFLICT/BOARD_MISMATCH | 重读身份、版本、目标及分区；重新预览 |
